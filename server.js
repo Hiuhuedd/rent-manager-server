@@ -79,7 +79,7 @@
 // });
 const express = require('express');
 const { getFirestoreApp } = require('./firebase');
-const { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc } = require('firebase/firestore');
+const { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, writeBatch } = require('firebase/firestore');
 const smsProcessor = require('./smsProcessor');
 const SMSService = require('./smsService');
 
@@ -165,39 +165,99 @@ app.get('/properties/:id/units', async (req, res) => {
   }
 });
 
-// POST /properties - Add a new property with units
+// ----------------------------------------------------
+//  /properties – FULLY LOGGED ENDPOINT
+// ----------------------------------------------------
 app.post('/properties', async (req, res) => {
+  const start = Date.now();                         // 1. Request start time
+  const ip = req.ip || req.connection.remoteAddress; // 2. Client IP
+
+  // 3. Full request payload (deep-cloned so we can redact later if needed)
+  const payload = JSON.parse(JSON.stringify(req.body));
+
+  console.log('\n=== NEW /properties REQUEST ===');
+  console.log(`Time      : ${new Date().toISOString()}`);
+  console.log(`IP        : ${ip}`);
+  console.log(`Method    : ${req.method}`);
+  console.log(`URL       : ${req.originalUrl}`);
+  console.log(`Headers   :`, req.headers);
+  console.log(`Payload   :`, JSON.stringify(payload, null, 2));
+
   try {
-    const { name, units } = req.body;
-    if (!name || !units || !Array.isArray(units)) {
-      return res.status(400).json(createErrorResponse(400, 'Name and units array are required'));
+    // ------------------------------------------------
+    // 4. Input validation (with detailed error log)
+    // ------------------------------------------------
+    const { name, units } = payload;
+    if (!name || typeof name !== 'string') {
+      console.warn('Validation failed – missing or invalid "name"');
+      return res.status(400).json({ error: 'Property name is required and must be a string' });
+    }
+    if (!Array.isArray(units) || units.length === 0) {
+      console.warn('Validation failed – "units" must be a non-empty array');
+      return res.status(400).json({ error: 'Units array is required and cannot be empty' });
     }
 
+    // ------------------------------------------------
+    // 5. Firestore write – log each batch step
+    // ------------------------------------------------
+    console.log(`Adding property "${name}" …`);
     const propertyRef = await addDoc(collection(db, 'properties'), { name });
-    const batch = db.batch();
-    units.forEach(unit => {
-      const unitRef = doc(collection(db, 'properties', propertyRef.id, 'units'));
-      batch.set(unitRef, { ...unit, propertyId: propertyRef.id });
-    });
-    await batch.commit();
+    const propertyId = propertyRef.id;
+    console.log(`Property document created – ID: ${propertyId}`);
 
-    // Create tenant entries for each unit with initial arrears
-    const tenantBatch = db.batch();
-    units.forEach(unit => {
+    // ---- Units batch ----
+    const unitBatch = writeBatch(db);
+    units.forEach((unit, idx) => {
+      const unitRef = doc(collection(db, 'properties', propertyId, 'units'));
+      unitBatch.set(unitRef, { ...unit, propertyId });
+      console.log(`  • Unit[${idx}] → ${unit.code} (rent: ${unit.rent})`);
+    });
+    await unitBatch.commit();
+    console.log(`Units batch committed (${units.length} docs)`);
+
+    // ---- Tenants batch ----
+    const tenantBatch = writeBatch(db);
+    units.forEach((unit, idx) => {
       const tenantRef = doc(collection(db, 'tenants'));
       tenantBatch.set(tenantRef, {
-        name: '', // Placeholder, to be updated by manager
+        name: '',
         unitCode: unit.code,
         phone: '',
         arrears: unit.rent || 0,
-        propertyId: propertyRef.id,
+        propertyId,
       });
+      console.log(`  • Tenant[${idx}] → unit ${unit.code}`);
     });
     await tenantBatch.commit();
+    console.log(`Tenants batch committed (${units.length} docs)`);
 
-    res.json({ success: true, message: 'Property added', id: propertyRef.id });
+    // ------------------------------------------------
+    // 6. Success response + timing
+    // ------------------------------------------------
+    const duration = Date.now() - start;
+    console.log(`Success – total time: ${duration} ms`);
+    console.log('=== END REQUEST ===\n');
+
+    res.json({
+      success: true,
+      message: 'Property added',
+      id: propertyId,
+      durationMs: duration,
+    });
   } catch (error) {
-    res.status(500).json(createErrorResponse(500, 'Error adding property', { error: error.message }));
+    // ------------------------------------------------
+    // 7. Error handling – full stack + context
+    // ------------------------------------------------
+    const duration = Date.now() - start;
+    console.error(`ERROR after ${duration} ms`);
+    console.error('Stack:', error.stack || error);
+    console.error('=== END REQUEST (FAILED) ===\n');
+
+    res.status(500).json({
+      error: 'Server error while adding property',
+      message: error.message,
+      code: error.code || 'UNKNOWN',
+    });
   }
 });
 
