@@ -509,27 +509,97 @@ app.post('/tenants/:id/send-confirmation', async (req, res) => {
 
 
 app.get('/stats', async (req, res) => {
-  try {
-    const properties = await db.collection('properties').get();
-    let units = 0, revenue = 0, arrears = 0, occupied = 0, vacant = 0;
+  const startTime = Date.now();
+  console.log('\n[INFO] /stats endpoint called at:', new Date().toISOString());
 
-    for (const prop of properties.docs) {
-      const unitsSnap = await prop.ref.collection('units').get();
-      units += unitsSnap.size;
-      unitsSnap.docs.forEach(u => {
-        const data = u.data();
-        revenue += data.rent || 0;
-        if (data.tenantId) occupied++; else vacant++;
+  try {
+    // 1. Fetch Properties
+    console.log('[STEP 1] Fetching properties...');
+    const propertiesSnap = await db.collection('properties').get();
+    const propertiesCount = propertiesSnap.size;
+    console.log(`[SUCCESS] Found ${propertiesCount} properties`);
+
+    let totalUnits = 0;
+    let totalRevenue = 0;
+    let occupiedUnits = 0;
+    let vacantUnits = 0;
+
+    // 2. Loop through each property
+    for (const [index, propDoc] of propertiesSnap.docs.entries()) {
+      const propId = propDoc.id;
+      const propData = propDoc.data();
+      console.log(`[STEP 2.${index + 1}] Processing property: ${propData.name || propId}`);
+
+      const unitsSnap = await propDoc.ref.collection('units').get();
+      const unitCount = unitsSnap.size;
+      totalUnits += unitCount;
+
+      unitsSnap.docs.forEach((unitDoc, uIdx) => {
+        const unitData = unitDoc.data();
+        const rent = unitData.rent || 0;
+        totalRevenue += rent;
+
+        if (unitData.tenantId) {
+          occupiedUnits++;
+          console.log(`   [UNIT ${uIdx + 1}] Occupied | Rent: KSH ${rent} | Tenant: ${unitData.tenantId}`);
+        } else {
+          vacantUnits++;
+          console.log(`   [UNIT ${uIdx + 1}] Vacant   | Rent: KSH ${rent}`);
+        }
       });
+
+      console.log(`   → ${unitCount} units | Revenue: KSH ${unitsSnap.docs.reduce((sum, d) => sum + (d.data().rent || 0), 0)}`);
     }
 
-    // Arrears from tenants collection
-    const tenants = await db.collection('tenants').get();
-    tenants.docs.forEach(t => arrears += t.data().arrears || 0);
+    // 3. Fetch Arrears from Tenants
+    console.log('[STEP 3] Fetching tenant arrears...');
+    const tenantsSnap = await db.collection('tenants').get();
+    let totalArrears = 0;
 
-    res.json({ properties: properties.size, units, revenue, arrears, occupied, vacant });
+    tenantsSnap.docs.forEach((tenantDoc, tIdx) => {
+      const tenantData = tenantDoc.data();
+      const arrears = tenantData.arrears || 0;
+      totalArrears += arrears;
+      if (arrears > 0) {
+        console.log(`   [TENANT ${tIdx + 1}] ${tenantData.name || tenantDoc.id} → Arrears: KSH ${arrears}`);
+      }
+    });
+
+    // 4. Final Stats
+    const stats = {
+      properties: propertiesCount,
+      units: totalUnits,
+      revenue: totalRevenue,
+      arrears: totalArrears,
+      occupied: occupiedUnits,
+      vacant: vacantUnits,
+      timestamp: new Date().toISOString(),
+      queryDurationMs: Date.now() - startTime,
+    };
+
+    console.log('[SUCCESS] Stats compiled successfully:');
+    console.log(JSON.stringify(stats, null, 2));
+
+    // 5. Send Response
+    res.status(200).json({
+      success: true,
+      data: stats,
+      message: 'Stats fetched successfully',
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 6. Error Handling
+    console.error('[ERROR] Failed to fetch stats:', {
+      message: err.message,
+      stack: err.stack,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch stats',
+      details: err.message,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
