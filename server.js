@@ -515,7 +515,8 @@ app.get('/stats', async (req, res) => {
   try {
     // 1. Fetch Properties
     console.log('[STEP 1] Fetching properties...');
-    const propertiesSnap = await db.collection('properties').get();
+    const propertiesQuery = query(collection(db, 'properties'));
+    const propertiesSnap = await getDocs(propertiesQuery);
     const propertiesCount = propertiesSnap.size;
     console.log(`[SUCCESS] Found ${propertiesCount} properties`);
 
@@ -525,12 +526,14 @@ app.get('/stats', async (req, res) => {
     let vacantUnits = 0;
 
     // 2. Loop through each property
-    for (const [index, propDoc] of propertiesSnap.docs.entries()) {
+    for (const [index, propDoc] of Array.from(propertiesSnap.docs).entries()) {
       const propId = propDoc.id;
       const propData = propDoc.data();
       console.log(`[STEP 2.${index + 1}] Processing property: ${propData.name || propId}`);
 
-      const unitsSnap = await propDoc.ref.collection('units').get();
+      // Modular: query(collection(db, 'properties', propId, 'units'))
+      const unitsQuery = query(collection(db, 'properties', propId, 'units'));
+      const unitsSnap = await getDocs(unitsQuery);
       const unitCount = unitsSnap.size;
       totalUnits += unitCount;
 
@@ -548,12 +551,13 @@ app.get('/stats', async (req, res) => {
         }
       });
 
-      console.log(`   → ${unitCount} units | Revenue: KSH ${unitsSnap.docs.reduce((sum, d) => sum + (d.data().rent || 0), 0)}`);
+      console.log(`   → ${unitCount} units | Revenue: KSH ${unitsSnap.docs.reduce((sum, doc) => sum + (doc.data().rent || 0), 0)}`);
     }
 
     // 3. Fetch Arrears from Tenants
     console.log('[STEP 3] Fetching tenant arrears...');
-    const tenantsSnap = await db.collection('tenants').get();
+    const tenantsQuery = query(collection(db, 'tenants'));
+    const tenantsSnap = await getDocs(tenantsQuery);
     let totalArrears = 0;
 
     tenantsSnap.docs.forEach((tenantDoc, tIdx) => {
@@ -580,16 +584,12 @@ app.get('/stats', async (req, res) => {
     console.log('[SUCCESS] Stats compiled successfully:');
     console.log(JSON.stringify(stats, null, 2));
 
-    // 5. Send Response
-    res.status(200).json({
-      success: true,
-      data: stats,
-      message: 'Stats fetched successfully',
-    });
+    res.json({ success: true, data: stats });
   } catch (err) {
-    // 6. Error Handling
-    console.error('[ERROR] Failed to fetch stats:', {
+    const duration = Date.now() - startTime;
+    console.error(`[ERROR] Failed after ${duration}ms:`, {
       message: err.message,
+      code: err.code,
       stack: err.stack,
       timestamp: new Date().toISOString(),
     });
@@ -602,7 +602,6 @@ app.get('/stats', async (req, res) => {
     });
   }
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
