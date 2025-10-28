@@ -507,6 +507,33 @@ app.post('/tenants/:id/send-confirmation', async (req, res) => {
   }
 });
 
+
+app.get('/stats', async (req, res) => {
+  try {
+    const properties = await db.collection('properties').get();
+    let units = 0, revenue = 0, arrears = 0, occupied = 0, vacant = 0;
+
+    for (const prop of properties.docs) {
+      const unitsSnap = await prop.ref.collection('units').get();
+      units += unitsSnap.size;
+      unitsSnap.docs.forEach(u => {
+        const data = u.data();
+        revenue += data.rent || 0;
+        if (data.tenantId) occupied++; else vacant++;
+      });
+    }
+
+    // Arrears from tenants collection
+    const tenants = await db.collection('tenants').get();
+    tenants.docs.forEach(t => arrears += t.data().arrears || 0);
+
+    res.json({ properties: properties.size, units, revenue, arrears, occupied, vacant });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
