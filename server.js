@@ -528,10 +528,9 @@ app.get('/stats', async (req, res) => {
   console.log('\n[INFO] /stats endpoint called at:', new Date().toISOString());
 
   try {
-    // 1. Fetch Properties
+    // === 1. Fetch All Properties ===
     console.log('[STEP 1] Fetching properties...');
-    const propertiesQuery = query(collection(db, 'properties'));
-    const propertiesSnap = await getDocs(propertiesQuery);
+    const propertiesSnap = await getDocs(collection(db, 'properties'));
     const propertiesCount = propertiesSnap.size;
     console.log(`[SUCCESS] Found ${propertiesCount} properties`);
 
@@ -540,51 +539,72 @@ app.get('/stats', async (req, res) => {
     let occupiedUnits = 0;
     let vacantUnits = 0;
 
-    // 2. Loop through each property
-    for (const [index, propDoc] of Array.from(propertiesSnap.docs).entries()) {
+    // === 2. Process Each Property ===
+    for (const [idx, propDoc] of propertiesSnap.docs.entries()) {
       const propId = propDoc.id;
       const propData = propDoc.data();
-      console.log(`[STEP 2.${index + 1}] Processing property: ${propData.name || propId}`);
+      console.log(`[STEP 2.${idx + 1}] Property: ${propData.propertyName || propId}`);
 
-      // Modular: query(collection(db, 'properties', propId, 'units'))
-      const unitsQuery = query(collection(db, 'properties', propId, 'units'));
-      const unitsSnap = await getDocs(unitsQuery);
-      const unitCount = unitsSnap.size;
-      totalUnits += unitCount;
+      // Use stored unit IDs to fetch efficiently
+      const unitIds = propData.propertyUnitIds || [];
 
-      unitsSnap.docs.forEach((unitDoc, uIdx) => {
-        const unitData = unitDoc.data();
-        const rent = unitData.rent || 0;
-        totalRevenue += rent;
+      if (unitIds.length === 0) {
+        console.log(`   → No units listed (propertyUnitIds missing)`);
+        continue;
+      }
 
-        if (unitData.tenantId) {
+      // Batch fetch all units for this property
+      const unitRefs = unitIds.map(id => doc(db, 'units', id));
+      const unitSnaps = await Promise.all(unitRefs.map(ref => getDoc(ref)));
+      const validUnits = unitSnaps.filter(snap => snap.exists());
+
+      totalUnits += validUnits.length;
+
+      validUnits.forEach((unitSnap, uIdx) => {
+        const unitData = unitSnap.data();
+
+        const rent = parseFloat(unitData.rentAmount) || 0;
+        const garbage = parseFloat(unitData.utilityFees?.garbageFee) || 0;
+        const water = parseFloat(unitData.utilityFees?.waterBill) || 0;
+
+        const unitTotal = rent + garbage + water;
+        totalRevenue += unitTotal;
+
+        if (unitData.isVacant === false) {
           occupiedUnits++;
-          console.log(`   [UNIT ${uIdx + 1}] Occupied | Rent: KSH ${rent} | Tenant: ${unitData.tenantId}`);
+          console.log(`   [UNIT ${uIdx + 1}] Occupied | Rent: ${rent} | Garbage: ${garbage} | Water: ${water} → Total: ${unitTotal}`);
         } else {
           vacantUnits++;
-          console.log(`   [UNIT ${uIdx + 1}] Vacant   | Rent: KSH ${rent}`);
+          console.log(`   [UNIT ${uIdx + 1}] Vacant   | Rent: ${rent} | Garbage: ${garbage} | Water: ${water} → Total: ${unitTotal}`);
         }
       });
 
-      console.log(`   → ${unitCount} units | Revenue: KSH ${unitsSnap.docs.reduce((sum, doc) => sum + (doc.data().rent || 0), 0)}`);
+      const propertyRevenue = validUnits.reduce((sum, snap) => {
+        const d = snap.data();
+        const r = parseFloat(d.rentAmount) || 0;
+        const g = parseFloat(d.utilityFees?.garbageFee) || 0;
+        const w = parseFloat(d.utilityFees?.waterBill) || 0;
+        return sum + r + g + w;
+      }, 0);
+
+      console.log(`   → ${validUnits.length} units | Revenue: KSH ${propertyRevenue}`);
     }
 
-    // 3. Fetch Arrears from Tenants
+    // === 3. Fetch Tenant Arrears ===
     console.log('[STEP 3] Fetching tenant arrears...');
-    const tenantsQuery = query(collection(db, 'tenants'));
-    const tenantsSnap = await getDocs(tenantsQuery);
+    const tenantsSnap = await getDocs(collection(db, 'tenants'));
     let totalArrears = 0;
 
     tenantsSnap.docs.forEach((tenantDoc, tIdx) => {
       const tenantData = tenantDoc.data();
-      const arrears = tenantData.arrears || 0;
+      const arrears = parseFloat(tenantData.arrears) || 0;
       totalArrears += arrears;
       if (arrears > 0) {
         console.log(`   [TENANT ${tIdx + 1}] ${tenantData.name || tenantDoc.id} → Arrears: KSH ${arrears}`);
       }
     });
 
-    // 4. Final Stats
+    // === 4. Compile Final Stats ===
     const stats = {
       properties: propertiesCount,
       units: totalUnits,
@@ -596,17 +616,16 @@ app.get('/stats', async (req, res) => {
       queryDurationMs: Date.now() - startTime,
     };
 
-    console.log('[SUCCESS] Stats compiled successfully:');
+    console.log('[SUCCESS] Stats compiled:');
     console.log(JSON.stringify(stats, null, 2));
 
     res.json({ success: true, data: stats });
   } catch (err) {
     const duration = Date.now() - startTime;
-    console.error(`[ERROR] Failed after ${duration}ms:`, {
+    console.error(`[ERROR] Stats failed after ${duration}ms:`, {
       message: err.message,
       code: err.code,
       stack: err.stack,
-      timestamp: new Date().toISOString(),
     });
 
     res.status(500).json({
