@@ -168,28 +168,25 @@ app.get('/properties/:id/units', async (req, res) => {
 // ----------------------------------------------------
 //  /properties – FULLY LOGGED ENDPOINT
 // ----------------------------------------------------
-app.post('/properties', async (req, res) => {
-  const start = Date.now();                         // 1. Request start time
-  const ip = req.ip || req.connection.remoteAddress; // 2. Client IP
 
-  // 3. Full request payload (deep-cloned so we can redact later if needed)
+app.post('/properties', async (req, res) => {
+  const start = Date.now();
+  const ip = req.ip || req.connection.remoteAddress;
   const payload = JSON.parse(JSON.stringify(req.body));
 
   console.log('\n=== NEW /properties REQUEST ===');
   console.log(`Time      : ${new Date().toISOString()}`);
   console.log(`IP        : ${ip}`);
-  console.log(`Method    : ${req.method}`);
-  console.log(`URL       : ${req.originalUrl}`);
-  console.log(`Headers   :`, req.headers);
   console.log(`Payload   :`, JSON.stringify(payload, null, 2));
 
   try {
-    // ------------------------------------------------
-    // 4. Input validation (with detailed error log)
-    // ------------------------------------------------
-    const { name, units } = payload;
-    if (!name || typeof name !== 'string') {
-      console.warn('Validation failed – missing or invalid "name"');
+    const { propertyName, units } = payload;
+
+    // -----------------------------
+    // 1. Validate input
+    // -----------------------------
+    if (!propertyName || typeof propertyName !== 'string') {
+      console.warn('Validation failed – missing or invalid "propertyName"');
       return res.status(400).json({ error: 'Property name is required and must be a string' });
     }
     if (!Array.isArray(units) || units.length === 0) {
@@ -197,59 +194,71 @@ app.post('/properties', async (req, res) => {
       return res.status(400).json({ error: 'Units array is required and cannot be empty' });
     }
 
-    // ------------------------------------------------
-    // 5. Firestore write – log each batch step
-    // ------------------------------------------------
-    console.log(`Adding property "${name}" …`);
-    const propertyRef = await addDoc(collection(db, 'properties'), { name });
+    // -----------------------------
+    // 2. Initialize batch + property ref
+    // -----------------------------
+    const batch = writeBatch(db);
+    const propertyRef = doc(collection(db, 'properties'));
     const propertyId = propertyRef.id;
-    console.log(`Property document created – ID: ${propertyId}`);
+    const propertyUnitIds = [];
 
-    // ---- Units batch ----
-    const unitBatch = writeBatch(db);
+    // -----------------------------
+    // 3. Create units in 'units' collection
+    // -----------------------------
     units.forEach((unit, idx) => {
-      const unitRef = doc(collection(db, 'properties', propertyId, 'units'));
-      unitBatch.set(unitRef, { ...unit, propertyId });
-      console.log(`  • Unit[${idx}] → ${unit.code} (rent: ${unit.rent})`);
-    });
-    await unitBatch.commit();
-    console.log(`Units batch committed (${units.length} docs)`);
+      const unitRef = doc(collection(db, 'units'));
+      const unitId = unitRef.id;
+      propertyUnitIds.push(unitId);
 
-    // ---- Tenants batch ----
-    const tenantBatch = writeBatch(db);
-    units.forEach((unit, idx) => {
-      const tenantRef = doc(collection(db, 'tenants'));
-      tenantBatch.set(tenantRef, {
-        name: '',
-        unitCode: unit.code,
-        phone: '',
-        arrears: unit.rent || 0,
+      const unitData = {
+        unitId,
         propertyId,
-      });
-      console.log(`  • Tenant[${idx}] → unit ${unit.code}`);
-    });
-    await tenantBatch.commit();
-    console.log(`Tenants batch committed (${units.length} docs)`);
+        isVacant: true,
+        category: unit.category || 'Standard',
+        rentAmount: unit.rentAmount || 0,
+        utilityFees: {
+          garbageFee: unit.utilityFees?.garbageFee || 0,
+          waterBill: unit.utilityFees?.waterBill || 0,
+        },
+      };
 
-    // ------------------------------------------------
-    // 6. Success response + timing
-    // ------------------------------------------------
+      batch.set(unitRef, unitData);
+      console.log(`  • Unit[${idx}] → ${unitId} (${unit.category || 'Standard'})`);
+    });
+
+    // -----------------------------
+    // 4. Create property document
+    // -----------------------------
+    const propertyData = {
+      propertyId,
+      propertyName,
+      propertyUnitsTotal: units.length,
+      propertyRevenueTotal: 0,
+      propertyUnitIds,
+      propertyVacantUnits: units.length,
+    };
+
+    batch.set(propertyRef, propertyData);
+
+    // -----------------------------
+    // 5. Commit batch
+    // -----------------------------
+    await batch.commit();
     const duration = Date.now() - start;
-    console.log(`Success – total time: ${duration} ms`);
+
+    console.log(`✅ Property "${propertyName}" created with ${units.length} units.`);
+    console.log(`Total time: ${duration} ms`);
     console.log('=== END REQUEST ===\n');
 
     res.json({
       success: true,
-      message: 'Property added',
-      id: propertyId,
+      message: 'Property and units created successfully',
+      propertyId,
       durationMs: duration,
     });
   } catch (error) {
-    // ------------------------------------------------
-    // 7. Error handling – full stack + context
-    // ------------------------------------------------
     const duration = Date.now() - start;
-    console.error(`ERROR after ${duration} ms`);
+    console.error(`❌ ERROR after ${duration} ms`);
     console.error('Stack:', error.stack || error);
     console.error('=== END REQUEST (FAILED) ===\n');
 
