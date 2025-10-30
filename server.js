@@ -206,8 +206,8 @@ app.post('/properties', async (req, res) => {
     // 3. Create units in 'units' collection
     // -----------------------------
     units.forEach((unit, idx) => {
-      const unitRef = doc(collection(db, 'units'));
-      const unitId = unitRef.id;
+   const unitId = unit.unitId; // use the one from frontend
+const unitRef = doc(db, 'units', unitId);
       propertyUnitIds.push(unitId);
 
       const unitData = {
