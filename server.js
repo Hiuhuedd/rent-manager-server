@@ -88,6 +88,11 @@ const db = getFirestoreApp();
 
 app.use(express.json());
 
+const cors = require('cors');
+app.use(cors({
+  origin: true, // Allow all origins in dev
+  credentials: true,
+}));
 // Standardized error response helper
 const createErrorResponse = (status, message, details = {}, originalData = null) => ({
   success: false,
@@ -352,6 +357,148 @@ app.post('/properties', async (req, res) => {
       error: 'Server error while adding property',
       message: error.message,
       code: error.code || 'UNKNOWN',
+    });
+  }
+});
+
+
+app.put('/properties/:id', async (req, res) => {
+  const start = Date.now();
+  const { id } = req.params;
+  const payload = req.body;
+
+  console.log(`\n=== PUT /properties/${id} ===`);
+  console.log(`Time: ${new Date().toISOString()}`);
+  console.log(`Payload:`, JSON.stringify(payload, null, 2));
+
+  try {
+    const { propertyName, units } = payload;
+
+    // 1. Validate
+    if (!propertyName || typeof propertyName !== 'string') {
+      return res.status(400).json({ error: 'propertyName is required and must be a string' });
+    }
+    if (!Array.isArray(units) || units.length === 0) {
+      return res.status(400).json({ error: 'units array is required and cannot be empty' });
+    }
+
+    // 2. Fetch current property
+    const propertyRef = doc(db, 'properties', id);
+    const propertySnap = await getDoc(propertyRef);
+
+    if (!propertySnap.exists()) {
+      return res.status(404).json({ error: 'Property not found' });
+    }
+
+    const currentData = propertySnap.data();
+    const currentUnitIds = currentData.propertyUnitIds || [];
+
+    // 3. Validate unit IDs match
+    const incomingUnitIds = units.map(u => u.unitId);
+    const missing = incomingUnitIds.filter(id => !currentUnitIds.includes(id));
+    const extra = currentUnitIds.filter(id => !incomingUnitIds.includes(id));
+
+    if (missing.length > 0 || extra.length > 0) {
+      console.log(`[VALIDATION] Unit ID mismatch`);
+      console.log(`Missing: ${missing.join(', ')}`);
+      console.log(`Extra: ${extra.join(', ')}`);
+      return res.status(400).json({
+        error: 'Unit IDs do not match stored property. Cannot modify unit list.',
+      });
+    }
+
+    // 4. Prepare batch
+    const batch = writeBatch(db);
+    let totalRevenue = 0;
+    let vacantCount = 0;
+
+    // 5. Update each unit
+    for (const unit of units) {
+      const { unitId, rentAmount, utilityFees = {}, isVacant, category } = unit;
+
+      const rent = parseFloat(rentAmount) || 0;
+      const garbage = parseFloat(utilityFees.garbageFee) || 0;
+      const water = parseFloat(utilityFees.waterBill) || 0;
+
+      const unitTotal = rent + garbage + water;
+      totalRevenue += unitTotal;
+
+      if (isVacant === true) vacantCount++;
+
+      const unitRef = doc(db, 'units', unitId);
+      batch.set(
+        unitRef,
+        {
+          rentAmount: rent,
+          utilityFees: { garbageFee: garbage, waterBill: water },
+          isVacant: !!isVacant,
+          category: category || 'Standard',
+        },
+        { merge: true }
+      );
+
+      console.log(`  • Updated ${unitId} | Rent: ${rent}, Garbage: ${garbage}, Water: ${water} → ${unitTotal}`);
+    }
+
+    // 6. Update property document
+    batch.set(
+      propertyRef,
+      {
+        propertyName,
+        propertyRevenueTotal: totalRevenue,
+        propertyVacantUnits: vacantCount,
+        propertyOccupiedUnits: units.length - vacantCount,
+        updatedAt: new Date(),
+      },
+      { merge: true }
+    );
+
+    // 7. Commit
+    await batch.commit();
+    const duration = Date.now() - start;
+
+    console.log(`[SUCCESS] Property "${propertyName}" updated`);
+    console.log(`Units: ${units.length} | Revenue: KSH ${totalRevenue} | Vacant: ${vacantCount}`);
+    console.log(`Duration: ${duration} ms`);
+    console.log('=== END PUT ===\n');
+
+    // 8. Return updated data
+    const updatedProperty = {
+      propertyId: id,
+      propertyName,
+      propertyUnitsTotal: units.length,
+      propertyRevenueTotal: totalRevenue,
+      propertyVacantUnits: vacantCount,
+      propertyOccupiedUnits: units.length - vacantCount,
+      units: units.map(u => ({
+        unitId: u.unitId,
+        category: u.category,
+        rentAmount: parseFloat(u.rentAmount) || 0,
+        utilityFees: {
+          garbageFee: parseFloat(u.utilityFees?.garbageFee) || 0,
+          waterBill: parseFloat(u.utilityFees?.waterBill) || 0,
+        },
+        isVacant: !!u.isVacant,
+        tenantId: u.tenantId || null,
+      })),
+    };
+
+    res.json({
+      success: true,
+      message: 'Property updated successfully',
+      property: updatedProperty,
+      durationMs: duration,
+    });
+  } catch (error) {
+    const duration = Date.now() - start;
+    console.error(`[ERROR] PUT /properties/${id} failed after ${duration} ms`);
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update property',
+      message: error.message,
     });
   }
 });
@@ -718,6 +865,9 @@ app.get('/stats', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
+  console.log(`Local: http://localhost:${PORT}`);
+  console.log(`On Your Network: http://192.168.1.105:${PORT}`); // ← Your IP
+
 });
