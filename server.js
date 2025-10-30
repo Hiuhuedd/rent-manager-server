@@ -205,26 +205,27 @@ app.post('/properties', async (req, res) => {
     // -----------------------------
     // 3. Create units in 'units' collection
     // -----------------------------
-    units.forEach((unit, idx) => {
-   const unitId = unit.unitId; // use the one from frontend
-const unitRef = doc(db, 'units', unitId);
-      propertyUnitIds.push(unitId);
+  units.forEach((unit, idx) => {
+  const unitId = unit.unitId; // 👈 frontend-defined ID
+  const unitRef = doc(db, 'units', unitId);
+  propertyUnitIds.push(unitId);
 
-      const unitData = {
-        unitId,
-        propertyId,
-        isVacant: true,
-        category: unit.category || 'Standard',
-        rentAmount: unit.rentAmount || 0,
-        utilityFees: {
-          garbageFee: unit.utilityFees?.garbageFee || 0,
-          waterBill: unit.utilityFees?.waterBill || 0,
-        },
-      };
+  const unitData = {
+    unitId,
+    propertyId,
+    isVacant: true,
+    category: unit.category || 'Standard',
+    rentAmount: unit.rentAmount || 0,
+    utilityFees: {
+      garbageFee: unit.utilityFees?.garbageFee || 0,
+      waterBill: unit.utilityFees?.waterBill || 0,
+    },
+  };
 
-      batch.set(unitRef, unitData);
-      console.log(`  • Unit[${idx}] → ${unitId} (${unit.category || 'Standard'})`);
-    });
+  batch.set(unitRef, unitData);
+  console.log(`  • Unit[${idx}] → ${unitId} (${unit.category || 'Standard'})`);
+});
+
 
     // -----------------------------
     // 4. Create property document
