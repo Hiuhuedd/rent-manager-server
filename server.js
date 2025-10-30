@@ -154,17 +154,97 @@ app.get('/properties', async (req, res) => {
   }
 });
 
-// GET /properties/:id/units - List units for a property
-app.get('/properties/:id/units', async (req, res) => {
+app.get('/properties/:id', async (req, res) => {
+  const start = Date.now();
+  const { id } = req.params;
+
+  console.log(`\n=== GET /properties/${id} ===`);
+  console.log(`Time: ${new Date().toISOString()}`);
+
   try {
-    const snapshot = await getDocs(collection(db, 'properties', req.params.id, 'units'));
-    const units = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(units);
+    // 1. Fetch property document
+    const propertyRef = doc(db, 'properties', id);
+    const propertySnap = await getDoc(propertyRef);
+
+    if (!propertySnap.exists()) {
+      console.log(`[NOT FOUND] Property ID: ${id}`);
+      return res.status(404).json({
+        success: false,
+        error: 'Property not found',
+      });
+    }
+
+    const propertyData = propertySnap.data();
+    console.log(`[FOUND] Property: ${propertyData.propertyName} | Units: ${propertyData.propertyUnitsTotal}`);
+
+    // 2. Fetch all units using propertyUnitIds
+    const unitIds = propertyData.propertyUnitIds || [];
+    if (unitIds.length === 0) {
+      console.log(`[WARN] No unit IDs stored in property`);
+    }
+
+    const unitRefs = unitIds.map(uid => doc(db, 'units', uid));
+    const unitSnaps = await Promise.all(unitRefs.map(ref => getDoc(ref)));
+
+    const units = unitSnaps
+      .filter(snap => snap.exists())
+      .map(snap => {
+        const data = snap.data();
+        return {
+          unitId: data.unitId,
+          category: data.category,
+          rentAmount: data.rentAmount,
+          utilityFees: {
+            garbageFee: data.utilityFees?.garbageFee || 0,
+            waterBill: data.utilityFees?.waterBill || 0,
+          },
+          isVacant: data.isVacant,
+          tenantId: data.tenantId || null,
+        };
+      });
+
+    // 3. Recalculate totals (in case of manual edits)
+    const recalculatedRevenue = units.reduce((sum, unit) => {
+      return sum + unit.rentAmount + unit.utilityFees.garbageFee + unit.utilityFees.waterBill;
+    }, 0);
+
+    const vacantCount = units.filter(u => u.isVacant).length;
+
+    // 4. Build final response
+    const response = {
+      success: true,
+      property: {
+        propertyId: propertyData.propertyId,
+        propertyName: propertyData.propertyName,
+        propertyUnitsTotal: units.length,
+        propertyRevenueTotal: recalculatedRevenue,
+        propertyVacantUnits: vacantCount,
+        propertyOccupiedUnits: units.length - vacantCount,
+        createdAt: propertyData.createdAt?.toDate?.() || null,
+        units,
+      },
+      queryDurationMs: Date.now() - start,
+    };
+
+    console.log(`[SUCCESS] Fetched ${units.length} units | Revenue: KSH ${recalculatedRevenue}`);
+    console.log(`Duration: ${response.queryDurationMs} ms`);
+    console.log('=== END GET ===\n');
+
+    res.json(response);
   } catch (error) {
-    res.status(500).json(createErrorResponse(500, 'Error fetching units', { error: error.message }));
+    const duration = Date.now() - start;
+    console.error(`[ERROR] GET /properties/${id} failed after ${duration} ms`);
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch property',
+      message: error.message,
+      code: error.code || 'UNKNOWN',
+    });
   }
 });
-
 // ----------------------------------------------------
 //  /properties – FULLY LOGGED ENDPOINT
 // ----------------------------------------------------
