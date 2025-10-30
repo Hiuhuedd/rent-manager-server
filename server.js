@@ -186,11 +186,9 @@ app.post('/properties', async (req, res) => {
     // 1. Validate input
     // -----------------------------
     if (!propertyName || typeof propertyName !== 'string') {
-      console.warn('Validation failed – missing or invalid "propertyName"');
       return res.status(400).json({ error: 'Property name is required and must be a string' });
     }
     if (!Array.isArray(units) || units.length === 0) {
-      console.warn('Validation failed – "units" must be a non-empty array');
       return res.status(400).json({ error: 'Units array is required and cannot be empty' });
     }
 
@@ -202,30 +200,35 @@ app.post('/properties', async (req, res) => {
     const propertyId = propertyRef.id;
     const propertyUnitIds = [];
 
+    let totalRevenue = 0;
+
     // -----------------------------
-    // 3. Create units in 'units' collection
+    // 3. Create units + calculate revenue
     // -----------------------------
-  units.forEach((unit, idx) => {
-  const unitId = unit.unitId; // 👈 frontend-defined ID
-  const unitRef = doc(db, 'units', unitId);
-  propertyUnitIds.push(unitId);
+    units.forEach((unit, idx) => {
+      const unitId = unit.unitId;
+      const unitRef = doc(db, 'units', unitId);
+      propertyUnitIds.push(unitId);
 
-  const unitData = {
-    unitId,
-    propertyId,
-    isVacant: true,
-    category: unit.category || 'Standard',
-    rentAmount: unit.rentAmount || 0,
-    utilityFees: {
-      garbageFee: unit.utilityFees?.garbageFee || 0,
-      waterBill: unit.utilityFees?.waterBill || 0,
-    },
-  };
+      const rent = parseFloat(unit.rentAmount) || 0;
+      const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
 
-  batch.set(unitRef, unitData);
-  console.log(`  • Unit[${idx}] → ${unitId} (${unit.category || 'Standard'})`);
-});
+      const unitTotal = rent + garbage + water;
+      totalRevenue += unitTotal;
 
+      const unitData = {
+        unitId,
+        propertyId,
+        isVacant: true,
+        category: unit.category || 'Standard',
+        rentAmount: rent,
+        utilityFees: { garbageFee: garbage, waterBill: water },
+      };
+
+      batch.set(unitRef, unitData);
+      console.log(`  • Unit[${idx}] → ${unitId} | Rent: ${rent}, Garbage: ${garbage}, Water: ${water} → ${unitTotal}`);
+    });
 
     // -----------------------------
     // 4. Create property document
@@ -234,7 +237,7 @@ app.post('/properties', async (req, res) => {
       propertyId,
       propertyName,
       propertyUnitsTotal: units.length,
-      propertyRevenueTotal: 0,
+      propertyRevenueTotal: totalRevenue,
       propertyUnitIds,
       propertyVacantUnits: units.length,
     };
@@ -247,7 +250,8 @@ app.post('/properties', async (req, res) => {
     await batch.commit();
     const duration = Date.now() - start;
 
-    console.log(`✅ Property "${propertyName}" created with ${units.length} units.`);
+    console.log(`Property "${propertyName}" created with ${units.length} units.`);
+    console.log(`Total Revenue: KSH ${totalRevenue}`);
     console.log(`Total time: ${duration} ms`);
     console.log('=== END REQUEST ===\n');
 
@@ -255,11 +259,12 @@ app.post('/properties', async (req, res) => {
       success: true,
       message: 'Property and units created successfully',
       propertyId,
+      totalRevenue,
       durationMs: duration,
     });
   } catch (error) {
     const duration = Date.now() - start;
-    console.error(`❌ ERROR after ${duration} ms`);
+    console.error(`ERROR after ${duration} ms`);
     console.error('Stack:', error.stack || error);
     console.error('=== END REQUEST (FAILED) ===\n');
 
