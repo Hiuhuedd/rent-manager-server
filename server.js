@@ -537,7 +537,7 @@ app.post('/tenants', async (req, res) => {
     }
 
     // Verify unit exists
-    const unitsQuery = query(collection(db, 'units'), where('code', '==', unitCode));
+const unitsQuery = query(collection(db, 'units'), where('unitId', '==', unitCode));
     const unitsSnapshot = await getDocs(unitsQuery);
     if (unitsSnapshot.empty) {
       return res.status(400).json(createErrorResponse(400, `Unit ${unitCode} not found`));
