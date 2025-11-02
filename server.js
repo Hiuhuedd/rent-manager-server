@@ -528,77 +528,114 @@ app.get('/tenants/:id', async (req, res) => {
   }
 });
 
-// POST /tenants - Add or update a tenant
 app.post('/tenants', async (req, res) => {
+  const start = Date.now();
+  console.log('\n=== NEW /tenants REQUEST ===');
+
   try {
     const { id, name, unitCode, phone } = req.body;
+    console.log('📥 Incoming tenant data:', req.body);
 
-    console.log('📥 Incoming tenant data:', { id, name, unitCode, phone });
-
+    // Validate required fields
     if (!unitCode || !name || !phone) {
-      console.warn('⚠️ Missing required fields:', { name, unitCode, phone });
-      return res
-        .status(400)
-        .json(createErrorResponse(400, 'Name, unitCode, and phone are required'));
+      console.warn('⚠️ Missing required fields:', { unitCode, name, phone });
+      return res.status(400).json(createErrorResponse(400, 'Name, unitCode, and phone are required'));
     }
 
-    // Verify unit exists
-    console.log('🔍 Checking if unit exists for code:', unitCode);
+    // ---------------------------
+    // 1️⃣ Verify Unit Exists
+    // ---------------------------
+    console.log('🔍 Checking if unit exists for unitId:', unitCode);
     const unitsQuery = query(collection(db, 'units'), where('unitId', '==', unitCode));
     const unitsSnapshot = await getDocs(unitsQuery);
 
     if (unitsSnapshot.empty) {
-      console.error('❌ Unit not found for code:', unitCode);
+      console.error('❌ Unit not found for unitId:', unitCode);
       return res.status(400).json(createErrorResponse(400, `Unit ${unitCode} not found`));
     }
 
     const unitDoc = unitsSnapshot.docs[0];
     const unit = unitDoc.data();
-    console.log('✅ Unit found:', unit);
+    console.log('✅ Unit found:', { propertyId: unit.propertyId, isVacant: unit.isVacant, rentAmount: unit.rentAmount });
 
-    // Tenant data
+    // ---------------------------
+    // 2️⃣ Create or Update Tenant
+    // ---------------------------
     const tenantData = {
-      name,
+      name: name.trim(),
       unitCode,
-      phone,
+      phone: phone.trim(),
       propertyId: unit.propertyId,
-      arrears: unit.rent || 0,
+      arrears: unit.rentAmount || 0,
+      createdAt: new Date().toISOString(),
     };
 
-    console.log('🧾 Tenant data to save:', tenantData);
-
     let tenantId;
+
     if (id) {
-      console.log('✏️ Updating existing tenant with ID:', id);
+      console.log('✏️ Updating existing tenant:', id);
       await updateDoc(doc(db, 'tenants', id), tenantData);
       tenantId = id;
     } else {
-      console.log('➕ Creating new tenant...');
+      console.log('➕ Creating new tenant document...');
       const tenantRef = await addDoc(collection(db, 'tenants'), tenantData);
       tenantId = tenantRef.id;
     }
 
-    console.log('✅ Tenant saved with ID:', tenantId);
+    console.log('✅ Tenant saved successfully:', tenantId);
 
-    // 🔄 Update unit with tenant info
-    const unitUpdate = {
+    // ---------------------------
+    // 3️⃣ Link Tenant to Unit
+    // ---------------------------
+    console.log(`🔗 Linking tenant (${tenantId}) to unit (${unitCode})...`);
+    const unitRef = doc(db, 'units', unitDoc.id);
+    await updateDoc(unitRef, {
       tenantId,
-      tenantName: name,
-      tenantPhone: phone,
       isVacant: false,
-    };
+    });
+    console.log('✅ Unit updated: tenant linked & marked occupied.');
 
-    console.log('🧱 Updating unit with tenant info:', unitUpdate);
+    // ---------------------------
+    // 4️⃣ Update Property Stats
+    // ---------------------------
+    console.log(`🏠 Updating property (${unit.propertyId}) occupancy and revenue...`);
+    const propertyRef = doc(db, 'properties', unit.propertyId);
+    const propertySnap = await getDoc(propertyRef);
 
-    await updateDoc(doc(db, 'units', unitDoc.id), unitUpdate);
-    console.log('✅ Unit updated successfully');
+    if (propertySnap.exists()) {
+      const propertyData = propertySnap.data();
+      const newVacantCount = Math.max((propertyData.propertyVacantUnits || 1) - 1, 0);
+      const newRevenue = (propertyData.propertyRevenueTotal || 0) + (unit.rentAmount || 0);
 
-    res.json({ success: true, message: 'Tenant and unit updated', id: tenantId });
+      await updateDoc(propertyRef, {
+        propertyVacantUnits: newVacantCount,
+        propertyRevenueTotal: newRevenue,
+      });
+
+      console.log(`✅ Property updated — Vacant: ${newVacantCount}, Revenue: ${newRevenue}`);
+    } else {
+      console.warn('⚠️ Property document not found:', unit.propertyId);
+    }
+
+    // ---------------------------
+    // ✅ Response
+    // ---------------------------
+    const duration = Date.now() - start;
+    console.log(`🎯 Tenant "${name}" successfully linked to "${unitCode}" in ${duration} ms`);
+    console.log('=== END REQUEST ===\n');
+
+    res.json({
+      success: true,
+      message: 'Tenant created and linked successfully',
+      id: tenantId,
+      durationMs: duration,
+    });
+
   } catch (error) {
-    console.error('💥 Error saving tenant:', error);
-    res
-      .status(500)
-      .json(createErrorResponse(500, 'Error saving tenant', { error: error.message }));
+    console.error('❌ SERVER ERROR while creating tenant:', error.stack || error);
+    res.status(500).json(
+      createErrorResponse(500, 'Error saving tenant', { error: error.message })
+    );
   }
 });
 
