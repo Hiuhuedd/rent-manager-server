@@ -544,7 +544,7 @@ app.post('/tenants', async (req, res) => {
 
     // Verify unit exists
     console.log('🔍 Checking if unit exists for code:', unitCode);
-    const unitsQuery = query(collection(db, 'units'), where('code', '==', unitCode));
+    const unitsQuery = query(collection(db, 'units'), where('unitId', '==', unitCode));
     const unitsSnapshot = await getDocs(unitsQuery);
 
     if (unitsSnapshot.empty) {
