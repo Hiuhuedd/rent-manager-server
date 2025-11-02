@@ -528,59 +528,80 @@ app.get('/tenants/:id', async (req, res) => {
   }
 });
 
+// POST /tenants - Add or update a tenant
 app.post('/tenants', async (req, res) => {
   try {
     const { id, name, unitCode, phone } = req.body;
-    console.log("📥 Incoming tenant request:", req.body);
+
+    console.log('📥 Incoming tenant data:', { id, name, unitCode, phone });
 
     if (!unitCode || !name || !phone) {
-      console.warn("⚠️ Missing required fields");
-      return res.status(400).json(createErrorResponse(400, 'Name, unitCode, and phone are required'));
+      console.warn('⚠️ Missing required fields:', { name, unitCode, phone });
+      return res
+        .status(400)
+        .json(createErrorResponse(400, 'Name, unitCode, and phone are required'));
     }
 
     // Verify unit exists
-    console.log("🔍 Searching for unit with unitId:", unitCode);
-    const unitsQuery = query(collection(db, 'units'), where('unitId', '==', unitCode));
+    console.log('🔍 Checking if unit exists for code:', unitCode);
+    const unitsQuery = query(collection(db, 'units'), where('code', '==', unitCode));
     const unitsSnapshot = await getDocs(unitsQuery);
 
     if (unitsSnapshot.empty) {
-      console.error(`❌ No unit found for code ${unitCode}`);
+      console.error('❌ Unit not found for code:', unitCode);
       return res.status(400).json(createErrorResponse(400, `Unit ${unitCode} not found`));
     }
 
     const unitDoc = unitsSnapshot.docs[0];
     const unit = unitDoc.data();
-    console.log("🏠 Found unit:", unit);
+    console.log('✅ Unit found:', unit);
 
+    // Tenant data
     const tenantData = {
       name,
       unitCode,
       phone,
       propertyId: unit.propertyId,
-      arrears: unit.rentAmount || 0,
-      createdAt: new Date().toISOString(),
+      arrears: unit.rent || 0,
     };
 
-    console.log("🧾 Prepared tenantData:", tenantData);
+    console.log('🧾 Tenant data to save:', tenantData);
 
     let tenantId;
     if (id) {
-      console.log("🛠 Updating existing tenant:", id);
+      console.log('✏️ Updating existing tenant with ID:', id);
       await updateDoc(doc(db, 'tenants', id), tenantData);
       tenantId = id;
     } else {
-      console.log("➕ Creating new tenant...");
+      console.log('➕ Creating new tenant...');
       const tenantRef = await addDoc(collection(db, 'tenants'), tenantData);
       tenantId = tenantRef.id;
     }
 
-    console.log("✅ Tenant saved successfully:", tenantId);
-    res.json({ success: true, message: 'Tenant saved', id: tenantId });
+    console.log('✅ Tenant saved with ID:', tenantId);
+
+    // 🔄 Update unit with tenant info
+    const unitUpdate = {
+      tenantId,
+      tenantName: name,
+      tenantPhone: phone,
+      isVacant: false,
+    };
+
+    console.log('🧱 Updating unit with tenant info:', unitUpdate);
+
+    await updateDoc(doc(db, 'units', unitDoc.id), unitUpdate);
+    console.log('✅ Unit updated successfully');
+
+    res.json({ success: true, message: 'Tenant and unit updated', id: tenantId });
   } catch (error) {
-    console.error("💥 Error in /tenants:", error);
-    res.status(500).json(createErrorResponse(500, 'Error saving tenant', { error: error.message }));
+    console.error('💥 Error saving tenant:', error);
+    res
+      .status(500)
+      .json(createErrorResponse(500, 'Error saving tenant', { error: error.message }));
   }
 });
+
 
 
 // GET /payments/status - Payment status per unit per month
