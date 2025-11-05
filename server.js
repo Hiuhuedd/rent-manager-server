@@ -634,7 +634,7 @@ app.post('/tenants', async (req, res) => {
       tenantStatus: tenantStatus || 'active',
       moveInDate: moveInDate || now,
       moveOutDate: moveOutDate || null,
-      createdAt: id ? undefined : now, // Don't overwrite on update
+      createdAt: id ? undefined : now,
       updatedAt: now,
       
       // Contact & Emergency Info
@@ -672,10 +672,10 @@ app.post('/tenants', async (req, res) => {
     };
 
     let tenantId;
+    let isNewTenant = false;
 
     if (id) {
       console.log('✏️ Updating existing tenant:', id);
-      // Remove undefined fields for update
       Object.keys(tenantData).forEach(key => 
         tenantData[key] === undefined && delete tenantData[key]
       );
@@ -685,6 +685,7 @@ app.post('/tenants', async (req, res) => {
       console.log('➕ Creating new tenant document...');
       const tenantRef = await addDoc(collection(db, 'tenants'), tenantData);
       tenantId = tenantRef.id;
+      isNewTenant = true;
     }
 
     console.log('✅ Tenant saved successfully:', tenantId);
@@ -725,7 +726,7 @@ app.post('/tenants', async (req, res) => {
     // ---------------------------
     // 5️⃣ Create Initial Payment Log Entry (Optional)
     // ---------------------------
-    if (!id) { // Only for new tenants
+    if (isNewTenant) {
       console.log('📝 Creating initial payment log entry...');
       try {
         await addDoc(collection(db, 'paymentLogs'), {
@@ -737,12 +738,68 @@ app.post('/tenants', async (req, res) => {
           dueDate: tenantData.paymentTimeline.nextPaymentDate,
           status: 'pending',
           createdAt: now,
-          month: new Date().toISOString().slice(0, 7), // YYYY-MM format
+          month: new Date().toISOString().slice(0, 7),
         });
         console.log('✅ Initial payment log created');
       } catch (logError) {
         console.warn('⚠️ Failed to create payment log:', logError.message);
-        // Non-critical, continue
+      }
+    }
+
+    // ---------------------------
+    // 6️⃣ Send Welcome SMS to New Tenant
+    // ---------------------------
+    if (isNewTenant) {
+      console.log('📱 Sending welcome SMS to new tenant...');
+      try {
+        const smsService = require('./smsService');
+        
+        // Prepare payment info
+        const paymentInfo = {
+          paybill:  '522533',
+          accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '')}`,
+        };
+
+        // Prepare tenant data for SMS
+        const tenantSMSData = {
+          name: name.trim(),
+          unitCode,
+          rentAmount: unit.rentAmount || 0,
+          phone: phone.trim(),
+        };
+
+        // Generate and send welcome message
+        const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
+        const smsResult = await smsService.sendSMS(
+          phone.trim(),
+          welcomeMessage,
+          'system', // userId
+          tenantId  // use tenantId as reference
+        );
+
+        if (smsResult.success) {
+          console.log('✅ Welcome SMS sent successfully');
+          console.log(`   - Message ID: ${smsResult.messageId}`);
+          
+          // Update tenant record with SMS info
+          await updateDoc(doc(db, 'tenants', tenantId), {
+            welcomeSMSSent: true,
+            welcomeSMSMessageId: smsResult.messageId,
+            welcomeSMSSentAt: now,
+          });
+        } else {
+          console.warn('⚠️ Failed to send welcome SMS:', smsResult.error);
+          
+          // Log failure but don't fail tenant creation
+          await updateDoc(doc(db, 'tenants', tenantId), {
+            welcomeSMSSent: false,
+            welcomeSMSError: smsResult.error,
+            welcomeSMSAttemptedAt: now,
+          });
+        }
+      } catch (smsError) {
+        console.error('❌ Error sending welcome SMS:', smsError.message);
+        // Don't fail tenant creation if SMS fails
       }
     }
 
@@ -764,6 +821,7 @@ app.post('/tenants', async (req, res) => {
         propertyId: tenantData.propertyId,
         moveInDate: tenantData.moveInDate,
         financialSummary: tenantData.financialSummary,
+        welcomeSMSSent: isNewTenant, // Indicates if welcome SMS was attempted
       },
       durationMs: duration,
     });
@@ -775,7 +833,6 @@ app.post('/tenants', async (req, res) => {
     );
   }
 });
-
 
 // GET /payments/status - Payment status per unit per month
 app.get('/payments/status', async (req, res) => {
