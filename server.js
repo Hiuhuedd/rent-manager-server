@@ -533,7 +533,25 @@ app.post('/tenants', async (req, res) => {
   console.log('\n=== NEW /tenants REQUEST ===');
 
   try {
-    const { id, name, unitCode, phone } = req.body;
+    const { 
+      id, 
+      name, 
+      unitCode, 
+      phone,
+      propertyDetails,
+      rentDeposit,
+      paymentTimeline,
+      paymentLogs,
+      financialSummary,
+      tenantStatus,
+      moveInDate,
+      moveOutDate,
+      contactInfo,
+      identification,
+      notes,
+      utilityFees
+    } = req.body;
+    
     console.log('📥 Incoming tenant data:', req.body);
 
     // Validate required fields
@@ -559,21 +577,108 @@ app.post('/tenants', async (req, res) => {
     console.log('✅ Unit found:', { propertyId: unit.propertyId, isVacant: unit.isVacant, rentAmount: unit.rentAmount });
 
     // ---------------------------
-    // 2️⃣ Create or Update Tenant
+    // 2️⃣ Create Comprehensive Tenant Data
     // ---------------------------
+    const now = new Date().toISOString();
+    
     const tenantData = {
+      // Core fields (required)
       name: name.trim(),
       unitCode,
       phone: phone.trim(),
       propertyId: unit.propertyId,
+      
+      // Property Details
+      propertyDetails: propertyDetails || {
+        propertyId: unit.propertyId,
+        propertyName: unit.propertyName || 'Unknown Property',
+        unitCategory: unit.category || 'Unknown',
+        rentAmount: unit.rentAmount || 0,
+      },
+      
+      // Rent Deposit Information
+      rentDeposit: rentDeposit || {
+        amount: unit.rentAmount || 0,
+        status: 'pending',
+        paidDate: null,
+        refundStatus: 'active',
+        notes: 'Initial deposit required',
+      },
+      
+      // Payment Timeline
+      paymentTimeline: paymentTimeline || {
+        leaseStartDate: now,
+        leaseEndDate: null,
+        rentDueDay: 1,
+        nextPaymentDate: new Date(new Date().setMonth(new Date().getMonth() + 1, 1)).toISOString(),
+        lastPaymentDate: null,
+        paymentFrequency: 'monthly',
+      },
+      
+      // Payment Logs
+      paymentLogs: paymentLogs || [],
+      
+      // Financial Summary
+      financialSummary: financialSummary || {
+        totalPaid: 0,
+        totalDue: unit.rentAmount || 0,
+        arrears: unit.rentAmount || 0,
+        balance: 0,
+        lastUpdated: now,
+      },
+      
+      // Legacy field for backward compatibility
       arrears: unit.rentAmount || 0,
-      createdAt: new Date().toISOString(),
+      
+      // Status & Metadata
+      tenantStatus: tenantStatus || 'active',
+      moveInDate: moveInDate || now,
+      moveOutDate: moveOutDate || null,
+      createdAt: id ? undefined : now, // Don't overwrite on update
+      updatedAt: now,
+      
+      // Contact & Emergency Info
+      contactInfo: contactInfo || {
+        email: null,
+        alternatePhone: null,
+        emergencyContact: {
+          name: null,
+          phone: null,
+          relationship: null,
+        },
+      },
+      
+      // Identification
+      identification: identification || {
+        idNumber: null,
+        idType: null,
+        idDocumentUrl: null,
+      },
+      
+      // Notes & Agreements
+      notes: notes || {
+        moveInNotes: 'New tenant added via mobile app',
+        specialTerms: null,
+        restrictions: null,
+      },
+      
+      // Utility Fees
+      utilityFees: utilityFees || unit.utilityFees || {
+        garbageFee: 0,
+        waterBill: 0,
+        electricity: 0,
+        other: 0,
+      },
     };
 
     let tenantId;
 
     if (id) {
       console.log('✏️ Updating existing tenant:', id);
+      // Remove undefined fields for update
+      Object.keys(tenantData).forEach(key => 
+        tenantData[key] === undefined && delete tenantData[key]
+      );
       await updateDoc(doc(db, 'tenants', id), tenantData);
       tenantId = id;
     } else {
@@ -618,6 +723,30 @@ app.post('/tenants', async (req, res) => {
     }
 
     // ---------------------------
+    // 5️⃣ Create Initial Payment Log Entry (Optional)
+    // ---------------------------
+    if (!id) { // Only for new tenants
+      console.log('📝 Creating initial payment log entry...');
+      try {
+        await addDoc(collection(db, 'paymentLogs'), {
+          tenantId,
+          unitCode,
+          propertyId: unit.propertyId,
+          type: 'rent_due',
+          amount: unit.rentAmount || 0,
+          dueDate: tenantData.paymentTimeline.nextPaymentDate,
+          status: 'pending',
+          createdAt: now,
+          month: new Date().toISOString().slice(0, 7), // YYYY-MM format
+        });
+        console.log('✅ Initial payment log created');
+      } catch (logError) {
+        console.warn('⚠️ Failed to create payment log:', logError.message);
+        // Non-critical, continue
+      }
+    }
+
+    // ---------------------------
     // ✅ Response
     // ---------------------------
     const duration = Date.now() - start;
@@ -628,6 +757,14 @@ app.post('/tenants', async (req, res) => {
       success: true,
       message: 'Tenant created and linked successfully',
       id: tenantId,
+      data: {
+        tenantId,
+        name: tenantData.name,
+        unitCode: tenantData.unitCode,
+        propertyId: tenantData.propertyId,
+        moveInDate: tenantData.moveInDate,
+        financialSummary: tenantData.financialSummary,
+      },
       durationMs: duration,
     });
 
@@ -638,7 +775,6 @@ app.post('/tenants', async (req, res) => {
     );
   }
 });
-
 
 
 // GET /payments/status - Payment status per unit per month
