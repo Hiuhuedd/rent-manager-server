@@ -33,10 +33,11 @@ generateTenantWelcomeSMS(tenantData, paymentInfo) {
     maximumFractionDigits: 0
   }).format(tenantData.rentAmount);
 
-  const paybill = paymentInfo.paybill;
+  const paybill = paymentInfo.paybill || process.env.SAMWEGA_PAYBILL;
   const accountNumber = paymentInfo.accountNumber;
 
-  const message = `Welcome ${tenantData.name}! Your unit ${tenantData.unitCode} is ready. Monthly rent: KSH ${formattedAmount}. Pay via Paybill ${paybill}, Acc ${accountNumber}. Due date: 1st of every month. For support call 0113689071.`;
+  // Shortened message to stay within 160 characters
+  const message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode} ready. Rent KSH ${formattedAmount}/month. Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Info: 0113689071`;
 
   console.log('✅ Welcome SMS generated successfully');
   console.log(`   - Message length: ${message.length} characters`);
