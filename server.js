@@ -79,7 +79,7 @@
 // });
 const express = require('express');
 const { getFirestoreApp } = require('./firebase');
-const { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, writeBatch } = require('firebase/firestore');
+const { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, writeBatch, deleteDoc } = require('firebase/firestore');
 const smsProcessor = require('./smsProcessor');
 const SMSService = require('./smsService');
 
