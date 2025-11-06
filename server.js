@@ -574,6 +574,7 @@ app.post('/tenants', async (req, res) => {
 
     const unitDoc = unitsSnapshot.docs[0];
     const unit = unitDoc.data();
+    const propertyDoc = await getDoc(doc(db, 'properties', unit.propertyId));
     console.log('✅ Unit found:', { propertyId: unit.propertyId, isVacant: unit.isVacant, rentAmount: unit.rentAmount });
 
     // ---------------------------
@@ -591,7 +592,7 @@ app.post('/tenants', async (req, res) => {
       // Property Details
       propertyDetails: propertyDetails || {
         propertyId: unit.propertyId,
-        propertyName: unit.propertyName || 'Unknown Property',
+        propertyName: propertyDoc.exists() ? propertyDoc.data().propertyName : 'Unknown',
         unitCategory: unit.category || 'Unknown',
         rentAmount: unit.rentAmount || 0,
       },
