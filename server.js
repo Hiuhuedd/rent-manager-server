@@ -1171,7 +1171,7 @@ app.get('/stats', async (req, res) => {
 app.delete('/tenants/:tenantId', async (req, res) => {
   const start = Date.now();
   console.log('\n=== DELETE TENANT REQUEST ===');
-  
+
   try {
     const { tenantId } = req.params;
     console.log('🗑️ Tenant ID to remove:', tenantId);
@@ -1248,20 +1248,11 @@ app.delete('/tenants/:tenantId', async (req, res) => {
     }
 
     // ---------------------------
-    // 5️⃣ Archive Tenant (Don't Delete)
+    // 5️⃣ Delete Tenant Document
     // ---------------------------
-    console.log('📦 Archiving tenant data...');
-    await updateDoc(tenantRef, {
-      tenantStatus: 'removed',
-      moveOutDate: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      removedAt: new Date().toISOString(),
-    });
-    console.log('✅ Tenant archived');
-
-    // Optional: Delete if you prefer hard delete instead of archive
-    // await deleteDoc(tenantRef);
-    // console.log('✅ Tenant deleted permanently');
+    console.log('🗑️ Deleting tenant document...');
+    await deleteDoc(tenantRef);
+    console.log('✅ Tenant document deleted from Firestore');
 
     // ---------------------------
     // 6️⃣ Update Payment Logs Status
@@ -1279,7 +1270,7 @@ app.delete('/tenants/:tenantId', async (req, res) => {
         updateDoc(doc.ref, {
           status: 'cancelled',
           cancelledAt: new Date().toISOString(),
-          cancelReason: 'Tenant removed',
+          cancelReason: 'Tenant deleted',
         })
       );
 
@@ -1293,25 +1284,25 @@ app.delete('/tenants/:tenantId', async (req, res) => {
     // ✅ Response
     // ---------------------------
     const duration = Date.now() - start;
-    console.log(`🎯 Tenant "${tenantData.name}" removed successfully in ${duration} ms`);
+    console.log(`🎯 Tenant "${tenantData.name}" deleted successfully in ${duration} ms`);
     console.log('=== END REQUEST ===\n');
 
     res.json({
       success: true,
-      message: 'Tenant removed successfully',
+      message: 'Tenant deleted successfully',
       data: {
         tenantId,
         name: tenantData.name,
         unitCode: tenantData.unitCode,
-        removedAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString(),
       },
       durationMs: duration,
     });
 
   } catch (error) {
-    console.error('❌ SERVER ERROR while removing tenant:', error.stack || error);
+    console.error('❌ SERVER ERROR while deleting tenant:', error.stack || error);
     res.status(500).json(
-      createErrorResponse(500, 'Error removing tenant', { error: error.message })
+      createErrorResponse(500, 'Error deleting tenant', { error: error.message })
     );
   }
 });
