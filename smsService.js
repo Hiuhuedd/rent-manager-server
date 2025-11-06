@@ -27,21 +27,49 @@ generateTenantWelcomeSMS(tenantData, paymentInfo) {
   console.log(`   - Tenant Name: ${tenantData.name}`);
   console.log(`   - Unit Code: ${tenantData.unitCode}`);
   console.log(`   - Rent Amount: ${tenantData.rentAmount}`);
+  console.log(`   - Utility Fees: ${tenantData.utilityFees || 0}`);
+  console.log(`   - Total Amount: ${tenantData.totalAmount}`);
 
-  const formattedAmount = new Intl.NumberFormat('en-KE', {
+  const rentAmount = tenantData.rentAmount || 0;
+  const utilityFees = tenantData.utilityFees || 0;
+  const totalAmount = tenantData.totalAmount || rentAmount;
+
+  const formattedTotal = new Intl.NumberFormat('en-KE', {
     style: 'decimal',
     maximumFractionDigits: 0
-  }).format(tenantData.rentAmount);
+  }).format(totalAmount);
 
-  const paybill = paymentInfo.paybill || process.env.SAMWEGA_PAYBILL;
+  const paybill = paymentInfo.paybill ;
   const accountNumber = paymentInfo.accountNumber;
 
-  // Shortened message to stay within 160 characters
-  const message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode} ready. Rent KSH ${formattedAmount}/month. Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Info: 0113689071`;
+  // Build message based on whether utilities exist
+  let message;
+  
+  if (utilityFees > 0) {
+    // Include utility info if there are utility fees
+    const formattedRent = new Intl.NumberFormat('en-KE', {
+      style: 'decimal',
+      maximumFractionDigits: 0
+    }).format(rentAmount);
+    
+    const formattedUtilities = new Intl.NumberFormat('en-KE', {
+      style: 'decimal',
+      maximumFractionDigits: 0
+    }).format(utilityFees);
+
+    message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode}. Rent ${formattedRent} + Utils ${formattedUtilities} = ${formattedTotal}/mo. Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Call 0113689071`;
+  } else {
+    // Simpler message without utilities
+    message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode} ready. Rent KSH ${formattedTotal}/month. Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Info: 0113689071`;
+  }
 
   console.log('✅ Welcome SMS generated successfully');
   console.log(`   - Message length: ${message.length} characters`);
   console.log(`   - Message: ${message}`);
+
+  if (message.length > 160) {
+    console.warn('⚠️ Message exceeds 160 characters, may be split into multiple SMS');
+  }
 
   return message;
 }

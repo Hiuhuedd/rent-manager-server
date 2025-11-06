@@ -749,60 +749,89 @@ app.post('/tenants', async (req, res) => {
     // ---------------------------
     // 6️⃣ Send Welcome SMS to New Tenant
     // ---------------------------
-    if (isNewTenant) {
-      console.log('📱 Sending welcome SMS to new tenant...');
-      try {
-        const smsService = require('./smsService');
-        
-        // Prepare payment info
-        const paymentInfo = {
-          paybill:  '522533',
-          accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '')}`,
-        };
+ // ---------------------------
+// 6️⃣ Send Welcome SMS to New Tenant
+// ---------------------------
+// In the SMS section (Step 6), update the tenant SMS data preparation:
 
-        // Prepare tenant data for SMS
-        const tenantSMSData = {
-          name: name.trim(),
-          unitCode,
-          rentAmount: unit.rentAmount || 0,
-          phone: phone.trim(),
-        };
-
-        // Generate and send welcome message
-        const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
-        const smsResult = await smsService.sendSMS(
-          phone.trim(),
-          welcomeMessage,
-          'system', // userId
-          tenantId  // use tenantId as reference
-        );
-
-        if (smsResult.success) {
-          console.log('✅ Welcome SMS sent successfully');
-          console.log(`   - Message ID: ${smsResult.messageId}`);
-          
-          // Update tenant record with SMS info
-          await updateDoc(doc(db, 'tenants', tenantId), {
-            welcomeSMSSent: true,
-            welcomeSMSMessageId: smsResult.messageId,
-            welcomeSMSSentAt: now,
-          });
-        } else {
-          console.warn('⚠️ Failed to send welcome SMS:', smsResult.error);
-          
-          // Log failure but don't fail tenant creation
-          await updateDoc(doc(db, 'tenants', tenantId), {
-            welcomeSMSSent: false,
-            welcomeSMSError: smsResult.error,
-            welcomeSMSAttemptedAt: now,
-          });
-        }
-      } catch (smsError) {
-        console.error('❌ Error sending welcome SMS:', smsError.message);
-        // Don't fail tenant creation if SMS fails
-      }
+if (isNewTenant) {
+  console.log('📱 Sending welcome SMS to new tenant...');
+  try {
+    const smsService = require('./smsService');
+    
+    // Format phone number for SMS (convert to +254 format)
+    let formattedPhoneForSMS = phone.trim();
+    if (formattedPhoneForSMS.startsWith('0')) {
+      formattedPhoneForSMS = '+254' + formattedPhoneForSMS.substring(1);
+    } else if (!formattedPhoneForSMS.startsWith('+254') && !formattedPhoneForSMS.startsWith('254')) {
+      formattedPhoneForSMS = '+254' + formattedPhoneForSMS;
     }
+    
+    console.log(`📞 Phone number formatted for SMS: ${phone.trim()} -> ${formattedPhoneForSMS}`);
+    
+    // Calculate total utility fees
+    const utilityFeesData = tenantData.utilityFees;
+    const totalUtilityFees = (utilityFeesData.garbageFee || 0) + 
+                             (utilityFeesData.waterBill || 0) + 
+                             (utilityFeesData.electricity || 0) + 
+                             (utilityFeesData.other || 0);
+    const rentAmount = unit.rentAmount || 0;
+    const totalMonthlyCharge = rentAmount + totalUtilityFees;
 
+    console.log('💰 Monthly charges breakdown:');
+    console.log(`   - Rent: KSH ${rentAmount}`);
+    console.log(`   - Utilities: KSH ${totalUtilityFees}`);
+    console.log(`   - Total: KSH ${totalMonthlyCharge}`);
+    
+    // Prepare payment info (account number stays in 0xxx format for Paybill)
+    const paymentInfo = {
+      paybill: '522533',
+      accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
+    };
+
+    console.log(`💳 Payment account number: ${paymentInfo.accountNumber}`);
+
+    // Prepare tenant data for SMS with total amount
+    const tenantSMSData = {
+      name: name.trim(),
+      unitCode,
+      rentAmount: rentAmount,
+      utilityFees: totalUtilityFees,
+      totalAmount: totalMonthlyCharge,
+      phone: phone.trim(),
+    };
+
+    // Generate and send welcome message
+    const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
+    const smsResult = await smsService.sendSMS(
+      formattedPhoneForSMS,
+      welcomeMessage,
+      'system',
+      tenantId
+    );
+
+    if (smsResult.success) {
+      console.log('✅ Welcome SMS sent successfully');
+      console.log(`   - Message ID: ${smsResult.messageId}`);
+      
+      await updateDoc(doc(db, 'tenants', tenantId), {
+        welcomeSMSSent: true,
+        welcomeSMSMessageId: smsResult.messageId,
+        welcomeSMSSentAt: now,
+      });
+    } else {
+      console.warn('⚠️ Failed to send welcome SMS:', smsResult.error);
+      
+      await updateDoc(doc(db, 'tenants', tenantId), {
+        welcomeSMSSent: false,
+        welcomeSMSError: smsResult.error,
+        welcomeSMSAttemptedAt: now,
+      });
+    }
+  } catch (smsError) {
+    console.error('❌ Error sending welcome SMS:', smsError.message);
+  }
+}
     // ---------------------------
     // ✅ Response
     // ---------------------------
@@ -1135,6 +1164,159 @@ app.get('/stats', async (req, res) => {
     });
   }
 });
+
+
+// Add this endpoint to your server file
+
+app.delete('/tenants/:tenantId', async (req, res) => {
+  const start = Date.now();
+  console.log('\n=== DELETE TENANT REQUEST ===');
+  
+  try {
+    const { tenantId } = req.params;
+    console.log('🗑️ Tenant ID to remove:', tenantId);
+
+    // ---------------------------
+    // 1️⃣ Get Tenant Data
+    // ---------------------------
+    const tenantRef = doc(db, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantRef);
+
+    if (!tenantSnap.exists()) {
+      console.error('❌ Tenant not found:', tenantId);
+      return res.status(404).json(createErrorResponse(404, 'Tenant not found'));
+    }
+
+    const tenantData = tenantSnap.data();
+    console.log('✅ Tenant found:', {
+      name: tenantData.name,
+      unitCode: tenantData.unitCode,
+      propertyId: tenantData.propertyId,
+    });
+
+    // ---------------------------
+    // 2️⃣ Get Unit Data
+    // ---------------------------
+    console.log('🔍 Finding unit:', tenantData.unitCode);
+    const unitsQuery = query(
+      collection(db, 'units'),
+      where('unitId', '==', tenantData.unitCode)
+    );
+    const unitsSnapshot = await getDocs(unitsQuery);
+
+    if (unitsSnapshot.empty) {
+      console.warn('⚠️ Unit not found for unitId:', tenantData.unitCode);
+    }
+
+    const unitDoc = unitsSnapshot.docs[0];
+    const unit = unitDoc?.data();
+
+    // ---------------------------
+    // 3️⃣ Update Unit (Mark as Vacant)
+    // ---------------------------
+    if (unitDoc) {
+      console.log('🔓 Marking unit as vacant...');
+      const unitRef = doc(db, 'units', unitDoc.id);
+      await updateDoc(unitRef, {
+        tenantId: null,
+        isVacant: true,
+      });
+      console.log('✅ Unit marked as vacant');
+    }
+
+    // ---------------------------
+    // 4️⃣ Update Property Stats
+    // ---------------------------
+    console.log('🏠 Updating property stats...');
+    const propertyRef = doc(db, 'properties', tenantData.propertyId);
+    const propertySnap = await getDoc(propertyRef);
+
+    if (propertySnap.exists()) {
+      const propertyData = propertySnap.data();
+      const newVacantCount = (propertyData.propertyVacantUnits || 0) + 1;
+      const rentAmount = unit?.rentAmount || 0;
+      const newRevenue = Math.max((propertyData.propertyRevenueTotal || 0) - rentAmount, 0);
+
+      await updateDoc(propertyRef, {
+        propertyVacantUnits: newVacantCount,
+        propertyRevenueTotal: newRevenue,
+      });
+
+      console.log(`✅ Property updated — Vacant: ${newVacantCount}, Revenue: ${newRevenue}`);
+    } else {
+      console.warn('⚠️ Property not found:', tenantData.propertyId);
+    }
+
+    // ---------------------------
+    // 5️⃣ Archive Tenant (Don't Delete)
+    // ---------------------------
+    console.log('📦 Archiving tenant data...');
+    await updateDoc(tenantRef, {
+      tenantStatus: 'removed',
+      moveOutDate: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      removedAt: new Date().toISOString(),
+    });
+    console.log('✅ Tenant archived');
+
+    // Optional: Delete if you prefer hard delete instead of archive
+    // await deleteDoc(tenantRef);
+    // console.log('✅ Tenant deleted permanently');
+
+    // ---------------------------
+    // 6️⃣ Update Payment Logs Status
+    // ---------------------------
+    console.log('📝 Updating payment logs...');
+    try {
+      const paymentLogsQuery = query(
+        collection(db, 'paymentLogs'),
+        where('tenantId', '==', tenantId),
+        where('status', '==', 'pending')
+      );
+      const paymentLogsSnapshot = await getDocs(paymentLogsQuery);
+
+      const updatePromises = paymentLogsSnapshot.docs.map((doc) =>
+        updateDoc(doc.ref, {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString(),
+          cancelReason: 'Tenant removed',
+        })
+      );
+
+      await Promise.all(updatePromises);
+      console.log(`✅ Updated ${updatePromises.length} payment logs`);
+    } catch (logError) {
+      console.warn('⚠️ Failed to update payment logs:', logError.message);
+    }
+
+    // ---------------------------
+    // ✅ Response
+    // ---------------------------
+    const duration = Date.now() - start;
+    console.log(`🎯 Tenant "${tenantData.name}" removed successfully in ${duration} ms`);
+    console.log('=== END REQUEST ===\n');
+
+    res.json({
+      success: true,
+      message: 'Tenant removed successfully',
+      data: {
+        tenantId,
+        name: tenantData.name,
+        unitCode: tenantData.unitCode,
+        removedAt: new Date().toISOString(),
+      },
+      durationMs: duration,
+    });
+
+  } catch (error) {
+    console.error('❌ SERVER ERROR while removing tenant:', error.stack || error);
+    res.status(500).json(
+      createErrorResponse(500, 'Error removing tenant', { error: error.message })
+    );
+  }
+});
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
