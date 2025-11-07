@@ -579,12 +579,20 @@ app.post('/tenants', async (req, res) => {
     const unitDoc = unitsSnapshot.docs[0];
     const unit = unitDoc.data();
     const propertyDoc = await getDoc(doc(db, 'properties', unit.propertyId));
-    console.log('✅ Unit found:', { propertyId: unit.propertyId, isVacant: unit.isVacant, rentAmount: unit.rentAmount });
+    console.log('✅ Unit found:', { 
+      propertyId: unit.propertyId, 
+      isVacant: unit.isVacant, 
+      rentAmount: unit.rentAmount,
+      depositAmount: unit.depositAmount 
+    });
 
     // ---------------------------
     // 2️⃣ Create Comprehensive Tenant Data
     // ---------------------------
     const now = new Date().toISOString();
+    
+    // Calculate deposit amount from unit data
+    const depositAmount = unit.depositAmount || 0;
     
     const tenantData = {
       // Core fields (required)
@@ -599,15 +607,16 @@ app.post('/tenants', async (req, res) => {
         propertyName: propertyDoc.exists() ? propertyDoc.data().propertyName : 'Unknown',
         unitCategory: unit.category || 'Unknown',
         rentAmount: unit.rentAmount || 0,
+        depositAmount: depositAmount,
       },
       
       // Rent Deposit Information
       rentDeposit: rentDeposit || {
-        amount: unit.rentAmount || 0,
-        status: 'pending',
+        amount: depositAmount,
+        status: depositAmount > 0 ? 'pending' : 'not_required',
         paidDate: null,
-        refundStatus: 'active',
-        notes: 'Initial deposit required',
+        refundStatus: depositAmount > 0 ? 'active' : 'not_applicable',
+        notes: depositAmount > 0 ? `Security deposit of KSH ${depositAmount} required` : 'No deposit required',
       },
       
       // Payment Timeline
@@ -629,6 +638,8 @@ app.post('/tenants', async (req, res) => {
         totalDue: unit.rentAmount || 0,
         arrears: unit.rentAmount || 0,
         balance: 0,
+        depositAmount: depositAmount,
+        depositStatus: depositAmount > 0 ? 'pending' : 'not_required',
         lastUpdated: now,
       },
       
@@ -754,89 +765,87 @@ app.post('/tenants', async (req, res) => {
     // ---------------------------
     // 6️⃣ Send Welcome SMS to New Tenant
     // ---------------------------
- // ---------------------------
-// 6️⃣ Send Welcome SMS to New Tenant
-// ---------------------------
-// In the SMS section (Step 6), update the tenant SMS data preparation:
+    if (isNewTenant) {
+      console.log('📱 Sending welcome SMS to new tenant...');
+      try {
+        const smsService = require('./smsService');
+        
+        // Format phone number for SMS (convert to +254 format)
+        let formattedPhoneForSMS = phone.trim();
+        if (formattedPhoneForSMS.startsWith('0')) {
+          formattedPhoneForSMS = '+254' + formattedPhoneForSMS.substring(1);
+        } else if (!formattedPhoneForSMS.startsWith('+254') && !formattedPhoneForSMS.startsWith('254')) {
+          formattedPhoneForSMS = '+254' + formattedPhoneForSMS;
+        }
+        
+        console.log(`📞 Phone number formatted for SMS: ${phone.trim()} -> ${formattedPhoneForSMS}`);
+        
+        // Calculate total utility fees
+        const utilityFeesData = tenantData.utilityFees;
+        const totalUtilityFees = (utilityFeesData.garbageFee || 0) + 
+                                 (utilityFeesData.waterBill || 0) + 
+                                 (utilityFeesData.electricity || 0) + 
+                                 (utilityFeesData.other || 0);
+        const rentAmount = unit.rentAmount || 0;
+        const totalMonthlyCharge = rentAmount + totalUtilityFees;
 
-if (isNewTenant) {
-  console.log('📱 Sending welcome SMS to new tenant...');
-  try {
-    const smsService = require('./smsService');
-    
-    // Format phone number for SMS (convert to +254 format)
-    let formattedPhoneForSMS = phone.trim();
-    if (formattedPhoneForSMS.startsWith('0')) {
-      formattedPhoneForSMS = '+254' + formattedPhoneForSMS.substring(1);
-    } else if (!formattedPhoneForSMS.startsWith('+254') && !formattedPhoneForSMS.startsWith('254')) {
-      formattedPhoneForSMS = '+254' + formattedPhoneForSMS;
+        console.log('💰 Charges breakdown:');
+        console.log(`   - Rent: KSH ${rentAmount}`);
+        console.log(`   - Utilities: KSH ${totalUtilityFees}`);
+        console.log(`   - Total Monthly: KSH ${totalMonthlyCharge}`);
+        console.log(`   - Deposit: KSH ${depositAmount}`);
+        
+        // Prepare payment info (account number stays in 0xxx format for Paybill)
+        const paymentInfo = {
+          paybill: '522533',
+          accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
+        };
+
+        console.log(`💳 Payment account number: ${paymentInfo.accountNumber}`);
+
+        // Prepare tenant data for SMS with deposit info
+        const tenantSMSData = {
+          name: name.trim(),
+          unitCode,
+          rentAmount: rentAmount,
+          utilityFees: totalUtilityFees,
+          totalAmount: totalMonthlyCharge,
+          depositAmount: depositAmount,
+          phone: phone.trim(),
+        };
+
+        // Generate and send welcome message with deposit info
+        const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
+        const smsResult = await smsService.sendSMS(
+          formattedPhoneForSMS,
+          welcomeMessage,
+          'system',
+          tenantId
+        );
+
+        if (smsResult.success) {
+          console.log('✅ Welcome SMS sent successfully');
+          console.log(`   - Message ID: ${smsResult.messageId}`);
+          
+          await updateDoc(doc(db, 'tenants', tenantId), {
+            welcomeSMSSent: true,
+            welcomeSMSMessageId: smsResult.messageId,
+            welcomeSMSSentAt: now,
+          });
+        } else {
+          console.warn('⚠️ Failed to send welcome SMS:', smsResult.error);
+          
+          await updateDoc(doc(db, 'tenants', tenantId), {
+            welcomeSMSSent: false,
+            welcomeSMSError: smsResult.error,
+            welcomeSMSAttemptedAt: now,
+          });
+        }
+      } catch (smsError) {
+        console.error('❌ Error sending welcome SMS:', smsError.message);
+      }
     }
-    
-    console.log(`📞 Phone number formatted for SMS: ${phone.trim()} -> ${formattedPhoneForSMS}`);
-    
-    // Calculate total utility fees
-    const utilityFeesData = tenantData.utilityFees;
-    const totalUtilityFees = (utilityFeesData.garbageFee || 0) + 
-                             (utilityFeesData.waterBill || 0) + 
-                             (utilityFeesData.electricity || 0) + 
-                             (utilityFeesData.other || 0);
-    const rentAmount = unit.rentAmount || 0;
-    const totalMonthlyCharge = rentAmount + totalUtilityFees;
 
-    console.log('💰 Monthly charges breakdown:');
-    console.log(`   - Rent: KSH ${rentAmount}`);
-    console.log(`   - Utilities: KSH ${totalUtilityFees}`);
-    console.log(`   - Total: KSH ${totalMonthlyCharge}`);
-    
-    // Prepare payment info (account number stays in 0xxx format for Paybill)
-    const paymentInfo = {
-      paybill: '522533',
-      accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
-    };
-
-    console.log(`💳 Payment account number: ${paymentInfo.accountNumber}`);
-
-    // Prepare tenant data for SMS with total amount
-    const tenantSMSData = {
-      name: name.trim(),
-      unitCode,
-      rentAmount: rentAmount,
-      utilityFees: totalUtilityFees,
-      totalAmount: totalMonthlyCharge,
-      phone: phone.trim(),
-    };
-
-    // Generate and send welcome message
-    const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
-    const smsResult = await smsService.sendSMS(
-      formattedPhoneForSMS,
-      welcomeMessage,
-      'system',
-      tenantId
-    );
-
-    if (smsResult.success) {
-      console.log('✅ Welcome SMS sent successfully');
-      console.log(`   - Message ID: ${smsResult.messageId}`);
-      
-      await updateDoc(doc(db, 'tenants', tenantId), {
-        welcomeSMSSent: true,
-        welcomeSMSMessageId: smsResult.messageId,
-        welcomeSMSSentAt: now,
-      });
-    } else {
-      console.warn('⚠️ Failed to send welcome SMS:', smsResult.error);
-      
-      await updateDoc(doc(db, 'tenants', tenantId), {
-        welcomeSMSSent: false,
-        welcomeSMSError: smsResult.error,
-        welcomeSMSAttemptedAt: now,
-      });
-    }
-  } catch (smsError) {
-    console.error('❌ Error sending welcome SMS:', smsError.message);
-  }
-}
     // ---------------------------
     // ✅ Response
     // ---------------------------
@@ -855,7 +864,11 @@ if (isNewTenant) {
         propertyId: tenantData.propertyId,
         moveInDate: tenantData.moveInDate,
         financialSummary: tenantData.financialSummary,
-        welcomeSMSSent: isNewTenant, // Indicates if welcome SMS was attempted
+        depositInfo: {
+          amount: depositAmount,
+          status: tenantData.rentDeposit.status,
+        },
+        welcomeSMSSent: isNewTenant,
       },
       durationMs: duration,
     });
@@ -867,7 +880,6 @@ if (isNewTenant) {
     );
   }
 });
-
 // GET /payments/status - Payment status per unit per month
 app.get('/payments/status', async (req, res) => {
   try {
