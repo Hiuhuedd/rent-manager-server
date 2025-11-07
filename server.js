@@ -295,21 +295,25 @@ app.post('/properties', async (req, res) => {
       const unitRef = doc(db, 'units', unitId);
       propertyUnitIds.push(unitId);
 
-      const rent = parseFloat(unit.rentAmount) || 0;
-      const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+   const rent = parseFloat(unit.rentAmount) || 0;
+const deposit = parseFloat(unit.depositAmount) || 0; // NEW
+const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+const water = parseFloat(unit.utilityFees?.waterBill) || 0;
 
-      const unitTotal = rent + garbage + water;
-      totalRevenue += unitTotal;
 
-      const unitData = {
-        unitId,
-        propertyId,
-        isVacant: true,
-        category: unit.category || 'Standard',
-        rentAmount: rent,
-        utilityFees: { garbageFee: garbage, waterBill: water },
-      };
+      const unitTotal = rent + garbage + water + deposit;
+totalRevenue += unitTotal;
+
+const unitData = {
+  unitId,
+  propertyId,
+  isVacant: true,
+  category: unit.category || 'Standard',
+  rentAmount: rent,
+  depositAmount: deposit, // NEW
+  utilityFees: { garbageFee: garbage, waterBill: water },
+};
+
 
       batch.set(unitRef, unitData);
       console.log(`  • Unit[${idx}] → ${unitId} | Rent: ${rent}, Garbage: ${garbage}, Water: ${water} → ${unitTotal}`);
