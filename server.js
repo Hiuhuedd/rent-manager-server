@@ -1080,7 +1080,7 @@ app.get('/stats', async (req, res) => {
     console.log(`[SUCCESS] Found ${propertiesCount} properties`);
 
     let totalUnits = 0;
-    let totalRevenue = 0;
+    let expectedMonthlyRevenue = 0; // Only from occupied units
     let occupiedUnits = 0;
     let vacantUnits = 0;
 
@@ -1105,34 +1105,49 @@ app.get('/stats', async (req, res) => {
 
       totalUnits += validUnits.length;
 
+      // Get all tenant IDs for this property to check for new tenants
+      const occupiedUnitTenantIds = validUnits
+        .filter(snap => !snap.data().isVacant && snap.data().tenantId)
+        .map(snap => snap.data().tenantId);
+
+      // Fetch tenants in batch to check move-in dates
+      const tenantRefs = occupiedUnitTenantIds.map(id => doc(db, 'tenants', id));
+      const tenantSnaps = await Promise.all(tenantRefs.map(ref => getDoc(ref)));
+      const tenantsMap = new Map();
+      
+      tenantSnaps.forEach(snap => {
+        if (snap.exists()) {
+          tenantsMap.set(snap.id, snap.data());
+        }
+      });
+
       validUnits.forEach((unitSnap, uIdx) => {
         const unitData = unitSnap.data();
 
         const rent = parseFloat(unitData.rentAmount) || 0;
+        const deposit = parseFloat(unitData.depositAmount) || 0;
         const garbage = parseFloat(unitData.utilityFees?.garbageFee) || 0;
         const water = parseFloat(unitData.utilityFees?.waterBill) || 0;
 
-        const unitTotal = rent + garbage + water;
-        totalRevenue += unitTotal;
-
         if (unitData.isVacant === false) {
           occupiedUnits++;
-          console.log(`   [UNIT ${uIdx + 1}] Occupied | Rent: ${rent} | Garbage: ${garbage} | Water: ${water} → Total: ${unitTotal}`);
+          
+          // Check if this is a new tenant (moved in this month)
+          const tenantData = tenantsMap.get(unitData.tenantId);
+          const isNewTenant = tenantData && isMovedInThisMonth(tenantData.moveInDate);
+          
+          // For new tenants, include deposit in expected revenue
+          const unitMonthlyTotal = rent + garbage + water + (isNewTenant ? deposit : 0);
+          expectedMonthlyRevenue += unitMonthlyTotal;
+          
+          console.log(`   [UNIT ${uIdx + 1}] Occupied | Rent: ${rent} | Deposit: ${isNewTenant ? deposit : 0} | Garbage: ${garbage} | Water: ${water} → Total: ${unitMonthlyTotal}`);
         } else {
           vacantUnits++;
-          console.log(`   [UNIT ${uIdx + 1}] Vacant   | Rent: ${rent} | Garbage: ${garbage} | Water: ${water} → Total: ${unitTotal}`);
+          console.log(`   [UNIT ${uIdx + 1}] Vacant (not counted in revenue)`);
         }
       });
 
-      const propertyRevenue = validUnits.reduce((sum, snap) => {
-        const d = snap.data();
-        const r = parseFloat(d.rentAmount) || 0;
-        const g = parseFloat(d.utilityFees?.garbageFee) || 0;
-        const w = parseFloat(d.utilityFees?.waterBill) || 0;
-        return sum + r + g + w;
-      }, 0);
-
-      console.log(`   → ${validUnits.length} units | Revenue: KSH ${propertyRevenue}`);
+      console.log(`   → ${validUnits.length} units | ${occupiedUnits} occupied | Expected Monthly Revenue: KSH ${expectedMonthlyRevenue}`);
     }
 
     // === 3. Fetch Tenant Arrears ===
@@ -1153,7 +1168,7 @@ app.get('/stats', async (req, res) => {
     const stats = {
       properties: propertiesCount,
       units: totalUnits,
-      revenue: totalRevenue,
+      revenue: expectedMonthlyRevenue, // Now only includes occupied units + deposits for new tenants
       arrears: totalArrears,
       occupied: occupiedUnits,
       vacant: vacantUnits,
@@ -1181,6 +1196,17 @@ app.get('/stats', async (req, res) => {
     });
   }
 });
+
+// Helper function to check if tenant moved in this month
+function isMovedInThisMonth(moveInDate) {
+  if (!moveInDate) return false;
+  
+  const moveIn = new Date(moveInDate);
+  const now = new Date();
+  
+  return moveIn.getMonth() === now.getMonth() && 
+         moveIn.getFullYear() === now.getFullYear();
+}
 
 
 // Add this endpoint to your server file
