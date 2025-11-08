@@ -191,31 +191,11 @@ const processRentalPayment = async (paymentData) => {
       tenant = { id: tenantsByAccountSnapshot.docs[0].id, ...tenantsByAccountSnapshot.docs[0].data() };
       matchStrategy = 'account number';
     } else {
-      // Strategy 2: Search by sender phone
-      const tenantsByPhoneQuery = query(
-        collection(db, 'tenants'), 
-        where('phone', '==', accountNumberNormalized)
-      );
-      const tenantsByPhoneSnapshot = await getDocs(tenantsByPhoneQuery);
-      
-      if (!tenantsByPhoneSnapshot.empty) {
-        tenant = { id: tenantsByPhoneSnapshot.docs[0].id, ...tenantsByPhoneSnapshot.docs[0].data() };
-        matchStrategy = 'sender phone';
-      } else {
-        // Strategy 3: Manual matching
-        const allTenantsSnapshot = await getDocs(collection(db, 'tenants'));
-        for (const doc of allTenantsSnapshot.docs) {
-          const data = doc.data();
-          const normalizedTenantPhone = normalizePhoneNumber(data.phone);
-          
-          if (normalizedTenantPhone === accountNumberNormalized || 
-              normalizedTenantPhone === senderPhoneNormalized) {
-            tenant = { id: doc.id, ...data };
-            matchStrategy = 'manual matching';
-            break;
-          }
-        }
-      }
+       console.error('❌ No tenant found');
+      return { 
+        success: false, 
+        error: `No tenant found for account ${accountNumber}` 
+      };
     }
 
     if (!tenant) {
