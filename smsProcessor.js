@@ -12,14 +12,50 @@ const db = getFirestoreApp();
 // UTILITY FUNCTIONS
 // ============================================
 
-/** Normalize phone number to 0XXXXXXXXX format */
+/** Normalize phone number and return common variants */
 const normalizePhoneNumber = (phone) => {
-  if (!phone) return '';
-  let cleaned = phone.replace(/[\s\-\(\)]/g, '').replace(/^\+/, '');
-  if (cleaned.startsWith('254')) cleaned = '0' + cleaned.substring(3);
-  if (cleaned.length === 9 && /^[17]/.test(cleaned)) cleaned = '0' + cleaned;
-  return cleaned;
+  if (!phone) return { local: '', intl: '', bare: '' };
+
+  // remove spaces, dashes, parentheses, leading +
+  let clean = String(phone).replace(/[\s\-\(\)]/g, '').replace(/^\+/, '');
+
+  // bare: e.g. 254743466032 or 7473466032 or 0743466032
+  let bare = clean;
+
+  // if starts with 0 and 10 digits -> convert to bare without leading 0
+  if (/^0\d{9}$/.test(bare)) {
+    bare = bare.substring(1); // 747...
+  }
+
+  // if starts with 254 and length 12, keep fine
+  if (!/^254\d{9}$/.test(bare) && /^\d{9}$/.test(bare)) {
+    // e.g. 747... -> make bare 747...
+    // already OK
+  }
+
+  // local: 0XXXXXXXXX
+  let local = '';
+  if (/^0\d{9}$/.test(clean)) {
+    local = clean;
+  } else if (/^254\d{9}$/.test(clean)) {
+    local = '0' + clean.substring(3);
+  } else if (/^\d{9}$/.test(clean)) {
+    local = '0' + clean;
+  }
+
+  // intl: +2547XXXXXXXX
+  let intl = '';
+  if (/^254\d{9}$/.test(clean)) {
+    intl = '+' + clean;
+  } else if (/^0\d{9}$/.test(clean)) {
+    intl = '+254' + clean.substring(1);
+  } else if (/^\d{9}$/.test(clean)) {
+    intl = '+254' + clean;
+  }
+
+  return { local, intl, bare: bare };
 };
+
 
 /** Format date to YYYY-MM */
 const getPaymentMonth = (date) => {
@@ -70,34 +106,52 @@ const parseMpesaWebhook = (webhookData) => {
     const { body } = webhookData;
     if (!body) throw new Error('No SMS body provided');
 
-    const regex =
-      /(\w+)\s+Confirmed\.\s+Ksh([\d,.]+)\.\d{2}\s+received\s+from\s+([^0-9]+?)\s+(\d{10,12})\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2}).*?Account\s+Number\s+([\w\d]+)/i;
+    // Accepts patterns like:
+    // TJNEWID0 Confirmed. on 20/9/25 at 12:05 AM Ksh5000.00 received from EDWARD KARIUKI HIUHU 254743466032. Account Number 0743466032 ...
+    const regex = /([A-Z0-9]+)\s+Confirmed\.(?:\s*on\s*(\d{1,2}\/\d{1,2}\/\d{2})(?:\s+at\s+([0-9:\sAPMapm]+))?)\s+Ksh([\d,]+\.\d{2})\s+received\s+from\s+(.+?)\s+(\d{9,12})\.?\s+Account\s+Number\s+([\d]+)/i;
 
-    const match = body.match(regex);
-    if (!match) throw new Error('Invalid M-Pesa SMS format');
+    const match = String(body).match(regex);
+    if (!match) {
+      console.error('SMS body not matched. Body:', body);
+      return { success: false, error: 'Invalid M-Pesa SMS format' };
+    }
 
-    const [, transactionId, amount, senderName, senderPhone, date, accountNumber] = match;
-    const [day, month, year] = date.split('/');
-    const fullYear = parseInt(year) + 2000;
-    const parsedDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
+    const [, transactionId, datePart, timePart, amountStr, senderName, senderPhone, accountNumberRaw] = match;
+
+    const [d, m, y] = datePart.split('/');
+    const fullYear = 2000 + parseInt(y, 10);
+    const parsedDate = new Date(fullYear, parseInt(m, 10) - 1, parseInt(d, 10));
+    // If time present try to parse and attach (best-effort)
+    if (timePart) {
+      const timeStr = timePart.replace(/\s+/g, ' ').trim();
+      // attempt to parse hh:mm AM/PM
+      const dt = new Date(`${parsedDate.toDateString()} ${timeStr}`);
+      if (!isNaN(dt.getTime())) parsedDate.setHours(dt.getHours(), dt.getMinutes(), 0, 0);
+    }
+
+    const amount = parseFloat(amountStr.replace(/,/g, '')); // e.g. 5000.00
+
+    const accountNumber = String(accountNumberRaw).trim();
+    const accountNorm = normalizePhoneNumber(accountNumber);
 
     return {
       success: true,
       data: {
         transactionId: transactionId.trim(),
-        amount: parseFloat(amount.replace(/,/g, '')),
-        senderName: senderName.trim(),
-        senderPhone: senderPhone.trim(),
-        accountNumber: accountNumber.trim(),
-        accountNumberNormalized: normalizePhoneNumber(accountNumber.trim()),
         date: parsedDate.toISOString(),
-        paymentMonth: getPaymentMonth(parsedDate)
+        paymentMonth: getPaymentMonth(parsedDate),
+        amount,
+        senderName: (senderName || '').trim(),
+        senderPhone: (senderPhone || '').trim(), // kept for logs only
+        accountNumber: accountNumber,
+        accountNumberVariants: accountNorm // { local, intl, bare }
       }
     };
-  } catch (error) {
-    return { success: false, error: error.message };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 };
+
 
 // ============================================
 // PROCESS RENTAL PAYMENT (ACCOUNT-ONLY MATCHING)
@@ -112,6 +166,7 @@ const processRentalPayment = async (paymentData) => {
       accountNumberNormalized,
       paymentMonth,
       date,
+      accountNumberVariants,
       senderName,
       senderPhone
     } = paymentData;
@@ -126,20 +181,27 @@ const processRentalPayment = async (paymentData) => {
     // ============================================
     // 1️⃣ FIND TENANT BY ACCOUNT NUMBER (TENANT PHONE)
     // ============================================
-    const tenantsQuery = query(
-      collection(db, 'tenants'),
-      where('phone', 'in', [accountNumber, accountNumberNormalized])
-    );
-    const tenantsSnapshot = await getDocs(tenantsQuery);
+const lookupPhones = [
+  accountNumberVariants.local, 
+  accountNumberVariants.intl, 
+  accountNumberVariants.bare, 
+  accountNumber
+].filter(Boolean);
 
-    if (tenantsSnapshot.empty) {
-      console.error(`❌ No tenant found for account number ${accountNumber}`);
-      return { success: false, error: `No tenant found for account ${accountNumber}` };
-    }
+// Firestore 'in' requires <=10 items; we only have 3-4 so ok
+const tenantsQuery = query(
+  collection(db, 'tenants'),
+  where('phone', 'in', lookupPhones)
+);
+const tenantsSnapshot = await getDocs(tenantsQuery);
 
-    const tenantDoc = tenantsSnapshot.docs[0];
-    const tenant = { id: tenantDoc.id, ...tenantDoc.data() };
-    console.log(`✅ Tenant matched: ${tenant.name} (${tenant.phone})`);
+if (tenantsSnapshot.empty) {
+  console.error(`❌ No tenant found for account (any variant):`, lookupPhones);
+  return { success: false, error: `No tenant found for account ${accountNumber}` };
+}
+
+const tenantDoc = tenantsSnapshot.docs[0];
+const tenant = { id: tenantDoc.id, ...tenantDoc.data() };
 
     // ============================================
     // 2️⃣ FETCH UNIT DETAILS

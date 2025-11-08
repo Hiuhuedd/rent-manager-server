@@ -11,6 +11,14 @@ const db = getFirestoreApp();
 app.use(express.json());
 
 const cors = require('cors');
+const { initializeMonthlyCronJob, createManualResetEndpoint } = require('./cronScheduler');
+
+// After app initialization and before routes:
+// Initialize monthly payment reset cron job
+initializeMonthlyCronJob();
+
+// Create manual reset endpoint
+createManualResetEndpoint(app);
 app.use(cors({
   origin: true, // Allow all origins in dev
   credentials: true,
@@ -26,168 +34,360 @@ const createErrorResponse = (status, message, details = {}, originalData = null)
   }
 });
 
-// Helper function to normalize phone number
-const formatPhoneNumber = (phone) => {
-  if (!phone) return null;
-  let cleaned = phone.trim().replace(/\s+/g, '');
-  // Convert accountNumber (e.g., '0712345678' or '254712345678') to '+254' format
-  if (cleaned.startsWith('0')) {
-    cleaned = '+254' + cleaned.substring(1);
-  } else if (cleaned.startsWith('254')) {
-    cleaned = '+254' + cleaned.substring(3);
-  } else if (!cleaned.startsWith('+254')) {
-    cleaned = '+254' + cleaned;
-  }
-  return cleaned;
-};
 
-// POST /webhook - Process M-Pesa SMS and update tenant
-app.post('/webhook', async (req, res) => {
+
+
+
+
+
+
+
+
+
+// ============================================
+// NEW ENDPOINTS TO ADD
+// ============================================
+
+// GET /tenants/:id/payment-status - Get detailed payment status for a tenant
+app.get('/tenants/:id/payment-status', async (req, res) => {
   try {
-    console.log('📥 Received SMS webhook:', JSON.stringify(req.body, null, 2));
-    const webhookData = req.body;
-
-    // Validate request body
-    if (!webhookData || !webhookData.body) {
-      console.error('❌ No SMS message provided in request body');
-      return res.status(400).json(createErrorResponse(400, 'SMS message is required', { receivedBody: req.body }));
+    const tenantRef = doc(db, 'tenants', req.params.id);
+    const tenantSnap = await getDoc(tenantRef);
+    
+    if (!tenantSnap.exists()) {
+      return res.status(404).json(createErrorResponse(404, 'Tenant not found'));
     }
-
-    // Parse SMS using smsProcessor
-    const parsedSMS = smsProcessor.parseMpesaWebhook(webhookData);
-    if (!parsedSMS.success) {
-      console.warn('⚠️ Failed to parse SMS:', parsedSMS.error);
-      return res.status(400).json(createErrorResponse(400, 'Invalid SMS message format', { error: parsedSMS.error }, webhookData.body));
-    }
-
-    const { transactionId, amount, date, accountNumber } = parsedSMS.data;
-
-    // Check if payment already exists
-    const paymentRef = doc(db, 'rental_payments', transactionId);
-    const paymentSnap = await getDoc(paymentRef);
-    if (paymentSnap.exists()) {
-      console.warn(`⚠️ Transaction ${transactionId} already exists`);
-      return res.status(409).json(createErrorResponse(409, `Transaction ${transactionId} already processed`, { transactionId }));
-    }
-
-    // Process the rental payment
-    const paymentResult = await smsProcessor.processRentalPayment(parsedSMS.data);
-    if (!paymentResult.success) {
-      console.error('❌ Failed to process rental payment:', paymentResult.error);
-      return res.status(400).json(createErrorResponse(400, 'Payment processing failed', { error: paymentResult.error, houseNumber: accountNumber }));
-    }
-
-    // Extract and normalize phone number from accountNumber
-    console.log(`🔍 Extracting phone number from accountNumber: ${accountNumber}`);
-    const formattedPhone = formatPhoneNumber(accountNumber);
-    if (!formattedPhone) {
-      console.error('❌ Invalid or missing accountNumber for phone lookup');
-      return res.status(400).json(createErrorResponse(400, 'Invalid account number for tenant lookup', { accountNumber }));
-    }
-    console.log(`✅ Normalized phone number: ${formattedPhone}`);
-
-    // Find tenant by phone number
-    console.log(`🔍 Searching for tenant with phone: ${formattedPhone}`);
-    const tenantsQuery = query(collection(db, 'tenants'), where('phone', '==', formattedPhone));
-    const tenantsSnapshot = await getDocs(tenantsQuery);
-
-    if (tenantsSnapshot.empty) {
-      console.warn(`⚠️ No tenant found for phone: ${formattedPhone}`);
-      return res.status(404).json(createErrorResponse(404, `No tenant found for phone number ${formattedPhone}`, { accountNumber }));
-    }
-
-    const tenantDoc = tenantsSnapshot.docs[0];
-    const tenantData = tenantDoc.data();
-    const tenantId = tenantDoc.id;
-    console.log(`✅ Found tenant: ${tenantData.name} (ID: ${tenantId})`);
-
-    // Update tenant document
-    const now = new Date().toISOString();
-    const paymentLogEntry = {
-      transactionId,
-      type: 'rent_payment',
-      amount: parseFloat(amount) || 0,
-      date: date || now,
-      status: 'completed',
-      createdAt: now,
-      month: date.slice(0, 7), // YYYY-MM
-    };
-
-    // Calculate new financial summary
-    const currentTotalPaid = parseFloat(tenantData.financialSummary?.totalPaid) || 0;
-    const currentTotalDue = parseFloat(tenantData.financialSummary?.totalDue) || 0;
-    const currentArrears = parseFloat(tenantData.arrears) || 0;
-
-    const newTotalPaid = currentTotalPaid + parseFloat(amount);
-    const newArrears = Math.max(0, currentArrears - parseFloat(amount));
-    const newBalance = newTotalPaid - currentTotalDue;
-
-    const updatedTenantData = {
-      paymentLogs: [...(tenantData.paymentLogs || []), paymentLogEntry],
-      financialSummary: {
-        ...(tenantData.financialSummary || {}),
-        totalPaid: newTotalPaid,
-        totalDue: currentTotalDue,
-        arrears: newArrears,
-        balance: newBalance,
-        lastUpdated: now,
-      },
-      arrears: newArrears, // Legacy field for backward compatibility
-      updatedAt: now,
-    };
-
-    // Update tenant document
-    await updateDoc(doc(db, 'tenants', tenantId), updatedTenantData);
-    console.log(`✅ Updated tenant ${tenantData.name} with payment: KSH ${amount}`);
-
-    // Send payment confirmation SMS
-    try {
-      const debt = {
-        debtCode: tenantData.unitCode,
-        storeOwner: { name: tenantData.name },
-        remainingAmount: newArrears,
-      };
-      const smsMessage = SMSService.generatePaymentConfirmationSMS(debt, amount);
-      const smsResult = await SMSService.sendSMS(formattedPhone, smsMessage, tenantId, tenantData.unitCode);
-
-      if (smsResult.success) {
-        console.log(`✅ Payment confirmation SMS sent: ${smsResult.messageId}`);
-        await updateDoc(doc(db, 'tenants', tenantId), {
-          lastPaymentSMS: {
-            messageId: smsResult.messageId,
-            sentAt: now,
-            status: 'sent',
-          },
-        });
-      } else {
-        console.warn(`⚠️ Failed to send payment confirmation SMS: ${smsResult.error}`);
-        await updateDoc(doc(db, 'tenants', tenantId), {
-          lastPaymentSMS: {
-            error: smsResult.error,
-            attemptedAt: now,
-            status: 'failed',
-          },
-        });
-      }
-    } catch (smsError) {
-      console.error(`❌ Error sending payment confirmation SMS: ${smsError.message}`);
-    }
-
-    console.log('✅ Webhook processed successfully:', JSON.stringify(paymentResult, null, 2));
-    res.status(200).json({
+    
+    const tenant = tenantSnap.data();
+    const monthlyTracking = tenant.monthlyPaymentTracking || {};
+    
+    res.json({
       success: true,
-      message: 'Rental payment processed and tenant updated successfully',
-      payment: paymentResult,
-      tenant: {
-        tenantId,
-        name: tenantData.name,
-        unitCode: tenantData.unitCode,
-        updatedFinancialSummary: updatedTenantData.financialSummary,
-      },
+      tenantId: req.params.id,
+      tenantName: tenant.name,
+      unitCode: tenant.unitCode,
+      currentMonth: monthlyTracking.month,
+      paymentStatus: monthlyTracking.status || 'unpaid',
+      expected: monthlyTracking.expectedAmount || 0,
+      paid: monthlyTracking.paidAmount || 0,
+      remaining: monthlyTracking.remainingAmount || 0,
+      breakdown: monthlyTracking.breakdown || {},
+      payments: monthlyTracking.payments || [],
+      financialSummary: tenant.financialSummary || {},
+      depositStatus: tenant.rentDeposit?.status || 'not_required'
     });
   } catch (error) {
-    console.error('❌ Webhook error:', error.message, error.stack);
-    res.status(500).json(createErrorResponse(500, 'Internal server error', { stack: error.stack }, req.body));
+    res.status(500).json(createErrorResponse(500, 'Error fetching payment status', { error: error.message }));
+  }
+});
+
+// GET /payments/monthly-report - Get monthly payment report for all tenants
+app.get('/payments/monthly-report', async (req, res) => {
+  try {
+    const { month } = req.query; // Format: YYYY-MM
+    const targetMonth = month || getCurrentMonth();
+    
+    console.log(`📊 Generating monthly report for: ${targetMonth}`);
+    
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    const report = {
+      month: targetMonth,
+      summary: {
+        totalTenants: 0,
+        paidInFull: 0,
+        partialPayment: 0,
+        unpaid: 0,
+        totalExpected: 0,
+        totalReceived: 0,
+        totalRemaining: 0
+      },
+      tenants: []
+    };
+    
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenant = tenantDoc.data();
+      const tracking = tenant.monthlyPaymentTracking || {};
+      
+      // Only include if tracking exists for target month
+      if (tracking.month === targetMonth) {
+        report.summary.totalTenants++;
+        report.summary.totalExpected += tracking.expectedAmount || 0;
+        report.summary.totalReceived += tracking.paidAmount || 0;
+        report.summary.totalRemaining += tracking.remainingAmount || 0;
+        
+        switch (tracking.status) {
+          case 'paid':
+            report.summary.paidInFull++;
+            break;
+          case 'partial':
+            report.summary.partialPayment++;
+            break;
+          case 'unpaid':
+            report.summary.unpaid++;
+            break;
+        }
+        
+        report.tenants.push({
+          tenantId: tenantDoc.id,
+          name: tenant.name,
+          unitCode: tenant.unitCode,
+          propertyName: tenant.propertyDetails?.propertyName,
+          status: tracking.status,
+          expected: tracking.expectedAmount,
+          paid: tracking.paidAmount,
+          remaining: tracking.remainingAmount,
+          breakdown: tracking.breakdown,
+          payments: tracking.payments
+        });
+      }
+    }
+    
+    console.log(`✅ Report generated: ${report.summary.totalTenants} tenants`);
+    res.json({ success: true, report });
+    
+  } catch (error) {
+    console.error('❌ Error generating monthly report:', error);
+    res.status(500).json(createErrorResponse(500, 'Error generating report', { error: error.message }));
+  }
+});
+
+// GET /payments/overdue - Get list of tenants with overdue payments
+app.get('/payments/overdue', async (req, res) => {
+  try {
+    const currentMonth = getCurrentMonth();
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    
+    const overdueList = [];
+    
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenant = tenantDoc.data();
+      const tracking = tenant.monthlyPaymentTracking || {};
+      
+      // Check if current month payment is not complete
+      if (tracking.month === currentMonth && tracking.status !== 'paid') {
+        overdueList.push({
+          tenantId: tenantDoc.id,
+          name: tenant.name,
+          phone: tenant.phone,
+          unitCode: tenant.unitCode,
+          propertyName: tenant.propertyDetails?.propertyName,
+          expectedAmount: tracking.expectedAmount || 0,
+          paidAmount: tracking.paidAmount || 0,
+          remainingAmount: tracking.remainingAmount || 0,
+          status: tracking.status,
+          arrears: tenant.financialSummary?.arrears || 0
+        });
+      }
+    }
+    
+    console.log(`📋 Found ${overdueList.length} tenants with incomplete payments`);
+    res.json({
+      success: true,
+      month: currentMonth,
+      count: overdueList.length,
+      tenants: overdueList
+    });
+    
+  } catch (error) {
+    res.status(500).json(createErrorResponse(500, 'Error fetching overdue payments', { error: error.message }));
+  }
+});
+
+// POST /payments/send-reminders - Send payment reminders to overdue tenants
+app.post('/payments/send-reminders', async (req, res) => {
+  try {
+    const currentMonth = getCurrentMonth();
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    
+    const remindersSent = [];
+    const remindersFailed = [];
+    
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenant = tenantDoc.data();
+      const tracking = tenant.monthlyPaymentTracking || {};
+      
+      // Only send to tenants with incomplete current month payments
+      if (tracking.month === currentMonth && tracking.status !== 'paid') {
+        try {
+          const debt = {
+            debtCode: tenant.unitCode,
+            storeOwner: { name: tenant.name },
+            remainingAmount: tracking.remainingAmount || 0,
+            paymentMethod: 'mpesa',
+            dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          };
+          
+          const smsMessage = SMSService.generateInvoiceSMS(debt, tenant.phone);
+          const smsResult = await SMSService.sendSMS(tenant.phone, smsMessage, tenantDoc.id, tenant.unitCode);
+          
+          if (smsResult.success) {
+            remindersSent.push({
+              tenantId: tenantDoc.id,
+              name: tenant.name,
+              phone: tenant.phone,
+              amount: tracking.remainingAmount,
+              messageId: smsResult.messageId
+            });
+            
+            // Log reminder sent
+            await updateDoc(doc(db, 'tenants', tenantDoc.id), {
+              lastReminderSent: new Date().toISOString(),
+              reminderCount: (tenant.reminderCount || 0) + 1
+            });
+          } else {
+            remindersFailed.push({
+              tenantId: tenantDoc.id,
+              name: tenant.name,
+              error: smsResult.error
+            });
+          }
+        } catch (error) {
+          remindersFailed.push({
+            tenantId: tenantDoc.id,
+            name: tenant.name,
+            error: error.message
+          });
+        }
+      }
+    }
+    
+    console.log(`📱 Reminders sent: ${remindersSent.length}, Failed: ${remindersFailed.length}`);
+    res.json({
+      success: true,
+      month: currentMonth,
+      sent: remindersSent.length,
+      failed: remindersFailed.length,
+      details: {
+        sent: remindersSent,
+        failed: remindersFailed
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json(createErrorResponse(500, 'Error sending reminders', { error: error.message }));
+  }
+});
+
+
+
+
+
+
+
+// POST /webhook - Process M-Pesa SMS Payments
+app.post('/webhook', async (req, res) => {
+  console.log('\n📩 === NEW M-PESA SMS WEBHOOK RECEIVED ===');
+
+  try {
+    const webhookData = req.body;
+    console.log('📥 Incoming Webhook Data:', JSON.stringify(webhookData, null, 2));
+
+    // ---------------------------
+    // 1️⃣ Validate request payload
+    // ---------------------------
+    if (!webhookData || !webhookData.body) {
+      console.error('❌ No SMS message provided in the request body');
+      return res.status(400).json({
+        success: false,
+        message: 'SMS message body is required',
+        receivedBody: req.body,
+      });
+    }
+
+    // ---------------------------
+    // 2️⃣ Parse the SMS message
+    // ---------------------------
+    const parsedSMS = smsProcessor.parseMpesaWebhook(webhookData);
+
+    if (!parsedSMS.success) {
+      console.warn('⚠️ Failed to parse SMS:', parsedSMS.error);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid SMS message format',
+        error: parsedSMS.error,
+        rawBody: webhookData.body,
+      });
+    }
+
+    const {
+      transactionId,
+      accountNumber,
+      amount,
+      date,
+      payerName,
+      paymentMethod,
+    } = parsedSMS.data;
+
+    console.log(`✅ Payment parsed: ${payerName} paid KSh ${amount} for ${accountNumber}`);
+
+    // ---------------------------
+    // 3️⃣ Check for duplicate payment
+    // ---------------------------
+    const paymentRef = doc(db, 'rental_payments', transactionId);
+    const paymentSnap = await getDoc(paymentRef);
+
+    if (paymentSnap.exists()) {
+      console.warn(`⚠️ Duplicate transaction: ${transactionId} already recorded`);
+      return res.status(409).json({
+        success: false,
+        message: `Transaction ${transactionId} already processed`,
+        transactionId,
+      });
+    }
+
+    // ---------------------------
+    // 4️⃣ Process payment (match tenant by accountNumber)
+    // ---------------------------
+    console.log(`🔍 Searching for tenant using accountNumber: ${accountNumber}`);
+
+    const paymentResult = await smsProcessor.processRentalPayment({
+      ...parsedSMS.data,
+      phoneToMatch: accountNumber, // only accountNumber is used for matching tenant
+    });
+
+    if (!paymentResult.success) {
+      console.error('❌ Failed to process rental payment:', paymentResult.error);
+      return res.status(400).json({
+        success: false,
+        message: 'Payment processing failed',
+        error: paymentResult.error,
+        houseNumber: accountNumber,
+      });
+    }
+
+    // ---------------------------
+    // 5️⃣ Store payment record in Firestore
+    // ---------------------------
+    await setDoc(paymentRef, {
+      ...parsedSMS.data,
+      status: 'processed',
+      timestamp: new Date().toISOString(),
+    });
+
+    console.log('✅ Payment saved successfully in Firestore.');
+
+    // ---------------------------
+    // 6️⃣ Return success response
+    // ---------------------------
+    console.log('🎉 Webhook completed successfully:', JSON.stringify(paymentResult, null, 2));
+
+    return res.status(200).json({
+      success: true,
+      message: 'Rental payment processed successfully',
+      payment: paymentResult,
+    });
+  } catch (error) {
+    // ---------------------------
+    // 7️⃣ Global error handler
+    // ---------------------------
+    console.error('💥 Webhook Error:', error.message, '\n', error.stack);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+      stack: error.stack,
+    });
   }
 });
 
