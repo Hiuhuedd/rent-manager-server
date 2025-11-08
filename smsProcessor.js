@@ -194,7 +194,7 @@ const processRentalPayment = async (paymentData) => {
       // Strategy 2: Search by sender phone
       const tenantsByPhoneQuery = query(
         collection(db, 'tenants'), 
-        where('phone', '==', senderPhoneNormalized)
+        where('phone', '==', accountNumberNormalized)
       );
       const tenantsByPhoneSnapshot = await getDocs(tenantsByPhoneQuery);
       
