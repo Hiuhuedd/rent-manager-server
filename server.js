@@ -1,82 +1,4 @@
-// const express = require('express');
-// const { getFirestoreApp } = require('./firebase');
-// const { doc, getDoc } = require('firebase/firestore');
-// const smsProcessor = require('./smsProcessor');
 
-// const app = express();
-// const db = getFirestoreApp();
-
-// app.use(express.json());
-
-// // Standardized error response helper
-// const createErrorResponse = (status, message, details = {}, originalData = null) => ({
-//   success: false,
-//   error: {
-//     message,
-//     code: status,
-//     details: process.env.NODE_ENV === 'development' ? details : undefined,
-//     originalData
-//   }
-// });
-
-// // POST /webhook - Receive and process M-Pesa SMS for rental payments
-// app.post('/webhook', async (req, res) => {
-//   try {
-//     console.log('📥 Received SMS webhook:', JSON.stringify(req.body, null, 2));
-
-//     // Extract webhook data
-//     const webhookData = req.body;
-
-//     // Validate webhook data
-//     if (!webhookData || !webhookData.body) {
-//       console.error('❌ No SMS message provided in request body');
-//       return res.status(400).json(createErrorResponse(400, 'SMS message is required', { receivedBody: req.body }));
-//     }
-
-//     // Parse the SMS using smsProcessor
-//     const parsedSMS = smsProcessor.parseMpesaWebhook(webhookData);
-
-//     if (!parsedSMS.success) {
-//       console.warn('⚠️ Failed to parse SMS:', parsedSMS.error);
-//       return res.status(400).json(createErrorResponse(400, 'Invalid SMS message format', { error: parsedSMS.error }, webhookData.body));
-//     }
-
-//     const { transactionId } = parsedSMS.data;
-
-//     // Check if transaction exists in Firestore 'rental_payments' collection
-//     const paymentRef = doc(db, 'rental_payments', transactionId);
-//     const paymentSnap = await getDoc(paymentRef);
-
-//     if (paymentSnap.exists()) {
-//       console.warn(`⚠️ Transaction ${transactionId} already exists`);
-//       return res.status(409).json(createErrorResponse(409, `Transaction ${transactionId} already processed`, { transactionId }));
-//     }
-
-//     // Process the payment (validate house and store payment)
-//     const paymentResult = await smsProcessor.processRentalPayment(parsedSMS.data);
-
-//     if (!paymentResult.success) {
-//       console.error('❌ Failed to process rental payment:', paymentResult.error);
-//       return res.status(400).json(createErrorResponse(400, 'Payment processing failed', { error: paymentResult.error, houseNumber: parsedSMS.data.accountNumber }));
-//     }
-
-//     console.log('✅ Webhook processed successfully:', JSON.stringify(paymentResult, null, 2));
-//     res.status(200).json({
-//       success: true,
-//       message: 'Rental payment processed successfully',
-//       payment: paymentResult
-//     });
-
-//   } catch (error) {
-//     console.error('❌ Webhook error:', error.message, error.stack);
-//     res.status(500).json(createErrorResponse(500, 'Internal server error', { stack: error.stack }, req.body));
-//   }
-// });
-
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//   console.log(`🚀 Server running on port ${PORT}`);
-// });
 const express = require('express');
 const { getFirestoreApp } = require('./firebase');
 const { doc, getDoc, setDoc, collection, getDocs, query, where, addDoc, updateDoc, writeBatch, deleteDoc } = require('firebase/firestore');
@@ -104,43 +26,164 @@ const createErrorResponse = (status, message, details = {}, originalData = null)
   }
 });
 
-// POST /webhook - Process M-Pesa SMS
+// Helper function to normalize phone number
+const formatPhoneNumber = (phone) => {
+  if (!phone) return null;
+  let cleaned = phone.trim().replace(/\s+/g, '');
+  // Convert accountNumber (e.g., '0712345678' or '254712345678') to '+254' format
+  if (cleaned.startsWith('0')) {
+    cleaned = '+254' + cleaned.substring(1);
+  } else if (cleaned.startsWith('254')) {
+    cleaned = '+254' + cleaned.substring(3);
+  } else if (!cleaned.startsWith('+254')) {
+    cleaned = '+254' + cleaned;
+  }
+  return cleaned;
+};
+
+// POST /webhook - Process M-Pesa SMS and update tenant
 app.post('/webhook', async (req, res) => {
   try {
     console.log('📥 Received SMS webhook:', JSON.stringify(req.body, null, 2));
     const webhookData = req.body;
 
+    // Validate request body
     if (!webhookData || !webhookData.body) {
       console.error('❌ No SMS message provided in request body');
       return res.status(400).json(createErrorResponse(400, 'SMS message is required', { receivedBody: req.body }));
     }
 
+    // Parse SMS using smsProcessor
     const parsedSMS = smsProcessor.parseMpesaWebhook(webhookData);
     if (!parsedSMS.success) {
       console.warn('⚠️ Failed to parse SMS:', parsedSMS.error);
       return res.status(400).json(createErrorResponse(400, 'Invalid SMS message format', { error: parsedSMS.error }, webhookData.body));
     }
 
-    const { transactionId } = parsedSMS.data;
+    const { transactionId, amount, date, accountNumber } = parsedSMS.data;
+
+    // Check if payment already exists
     const paymentRef = doc(db, 'rental_payments', transactionId);
     const paymentSnap = await getDoc(paymentRef);
-
     if (paymentSnap.exists()) {
       console.warn(`⚠️ Transaction ${transactionId} already exists`);
       return res.status(409).json(createErrorResponse(409, `Transaction ${transactionId} already processed`, { transactionId }));
     }
 
+    // Process the rental payment
     const paymentResult = await smsProcessor.processRentalPayment(parsedSMS.data);
     if (!paymentResult.success) {
       console.error('❌ Failed to process rental payment:', paymentResult.error);
-      return res.status(400).json(createErrorResponse(400, 'Payment processing failed', { error: paymentResult.error, houseNumber: parsedSMS.data.accountNumber }));
+      return res.status(400).json(createErrorResponse(400, 'Payment processing failed', { error: paymentResult.error, houseNumber: accountNumber }));
+    }
+
+    // Extract and normalize phone number from accountNumber
+    console.log(`🔍 Extracting phone number from accountNumber: ${accountNumber}`);
+    const formattedPhone = formatPhoneNumber(accountNumber);
+    if (!formattedPhone) {
+      console.error('❌ Invalid or missing accountNumber for phone lookup');
+      return res.status(400).json(createErrorResponse(400, 'Invalid account number for tenant lookup', { accountNumber }));
+    }
+    console.log(`✅ Normalized phone number: ${formattedPhone}`);
+
+    // Find tenant by phone number
+    console.log(`🔍 Searching for tenant with phone: ${formattedPhone}`);
+    const tenantsQuery = query(collection(db, 'tenants'), where('phone', '==', formattedPhone));
+    const tenantsSnapshot = await getDocs(tenantsQuery);
+
+    if (tenantsSnapshot.empty) {
+      console.warn(`⚠️ No tenant found for phone: ${formattedPhone}`);
+      return res.status(404).json(createErrorResponse(404, `No tenant found for phone number ${formattedPhone}`, { accountNumber }));
+    }
+
+    const tenantDoc = tenantsSnapshot.docs[0];
+    const tenantData = tenantDoc.data();
+    const tenantId = tenantDoc.id;
+    console.log(`✅ Found tenant: ${tenantData.name} (ID: ${tenantId})`);
+
+    // Update tenant document
+    const now = new Date().toISOString();
+    const paymentLogEntry = {
+      transactionId,
+      type: 'rent_payment',
+      amount: parseFloat(amount) || 0,
+      date: date || now,
+      status: 'completed',
+      createdAt: now,
+      month: date.slice(0, 7), // YYYY-MM
+    };
+
+    // Calculate new financial summary
+    const currentTotalPaid = parseFloat(tenantData.financialSummary?.totalPaid) || 0;
+    const currentTotalDue = parseFloat(tenantData.financialSummary?.totalDue) || 0;
+    const currentArrears = parseFloat(tenantData.arrears) || 0;
+
+    const newTotalPaid = currentTotalPaid + parseFloat(amount);
+    const newArrears = Math.max(0, currentArrears - parseFloat(amount));
+    const newBalance = newTotalPaid - currentTotalDue;
+
+    const updatedTenantData = {
+      paymentLogs: [...(tenantData.paymentLogs || []), paymentLogEntry],
+      financialSummary: {
+        ...(tenantData.financialSummary || {}),
+        totalPaid: newTotalPaid,
+        totalDue: currentTotalDue,
+        arrears: newArrears,
+        balance: newBalance,
+        lastUpdated: now,
+      },
+      arrears: newArrears, // Legacy field for backward compatibility
+      updatedAt: now,
+    };
+
+    // Update tenant document
+    await updateDoc(doc(db, 'tenants', tenantId), updatedTenantData);
+    console.log(`✅ Updated tenant ${tenantData.name} with payment: KSH ${amount}`);
+
+    // Send payment confirmation SMS
+    try {
+      const debt = {
+        debtCode: tenantData.unitCode,
+        storeOwner: { name: tenantData.name },
+        remainingAmount: newArrears,
+      };
+      const smsMessage = SMSService.generatePaymentConfirmationSMS(debt, amount);
+      const smsResult = await SMSService.sendSMS(formattedPhone, smsMessage, tenantId, tenantData.unitCode);
+
+      if (smsResult.success) {
+        console.log(`✅ Payment confirmation SMS sent: ${smsResult.messageId}`);
+        await updateDoc(doc(db, 'tenants', tenantId), {
+          lastPaymentSMS: {
+            messageId: smsResult.messageId,
+            sentAt: now,
+            status: 'sent',
+          },
+        });
+      } else {
+        console.warn(`⚠️ Failed to send payment confirmation SMS: ${smsResult.error}`);
+        await updateDoc(doc(db, 'tenants', tenantId), {
+          lastPaymentSMS: {
+            error: smsResult.error,
+            attemptedAt: now,
+            status: 'failed',
+          },
+        });
+      }
+    } catch (smsError) {
+      console.error(`❌ Error sending payment confirmation SMS: ${smsError.message}`);
     }
 
     console.log('✅ Webhook processed successfully:', JSON.stringify(paymentResult, null, 2));
     res.status(200).json({
       success: true,
-      message: 'Rental payment processed successfully',
-      payment: paymentResult
+      message: 'Rental payment processed and tenant updated successfully',
+      payment: paymentResult,
+      tenant: {
+        tenantId,
+        name: tenantData.name,
+        unitCode: tenantData.unitCode,
+        updatedFinancialSummary: updatedTenantData.financialSummary,
+      },
     });
   } catch (error) {
     console.error('❌ Webhook error:', error.message, error.stack);
