@@ -41,14 +41,16 @@ const createErrorResponse = (status, message, details = {}, originalData = null)
 
 
 
-
-
-
 // ============================================
-// NEW ENDPOINTS TO ADD
+// FIXED SERVER ENDPOINTS - Add these imports at the top
 // ============================================
 
-// GET /tenants/:id/payment-status - Get detailed payment status for a tenant
+const { getCurrentMonth, getPaymentMonth } = require('./smsProcessor');
+
+// ============================================
+// FIXED: GET /tenants/:id/payment-status
+// ============================================
+
 app.get('/tenants/:id/payment-status', async (req, res) => {
   try {
     const tenantRef = doc(db, 'tenants', req.params.id);
@@ -59,29 +61,100 @@ app.get('/tenants/:id/payment-status', async (req, res) => {
     }
     
     const tenant = tenantSnap.data();
-    const monthlyTracking = tenant.monthlyPaymentTracking || {};
+    
+    // Initialize monthly tracking if it doesn't exist or is outdated
+    let monthlyTracking = tenant.monthlyPaymentTracking || null;
+    const currentMonth = getCurrentMonth();
+    
+    // If no tracking or tracking is for a different month, initialize it
+    if (!monthlyTracking || monthlyTracking.month !== currentMonth) {
+      // Get unit details to initialize properly
+      const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode));
+      const unitsSnapshot = await getDocs(unitsQuery);
+      
+      if (!unitsSnapshot.empty) {
+        const unit = unitsSnapshot.docs[0].data();
+        
+        const rent = parseFloat(unit.rentAmount) || 0;
+        const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+        const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+        const deposit = parseFloat(unit.depositAmount) || 0;
+        
+        // Check if tenant needs to pay deposit this month
+        const isNewTenant = tenant.moveInDate && 
+          new Date(tenant.moveInDate).getMonth() === new Date().getMonth() &&
+          new Date(tenant.moveInDate).getFullYear() === new Date().getFullYear();
+        
+        const depositPending = tenant.rentDeposit?.status === 'pending';
+        const includeDeposit = isNewTenant && depositPending && deposit > 0;
+        
+        const monthlyRent = rent + garbage + water;
+        const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+        
+        monthlyTracking = {
+          month: currentMonth,
+          expectedAmount: totalExpected,
+          paidAmount: 0,
+          remainingAmount: totalExpected,
+          status: 'unpaid',
+          payments: [],
+          breakdown: {
+            deposit: 0,
+            rent: 0,
+            utilities: 0
+          },
+          includesDeposit: includeDeposit,
+          depositRequired: includeDeposit ? deposit : 0
+        };
+        
+        // Update tenant document with initialized tracking
+        await updateDoc(tenantRef, {
+          monthlyPaymentTracking: monthlyTracking,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
+    
+    // Ensure we have valid data
+    monthlyTracking = monthlyTracking || {
+      month: currentMonth,
+      expectedAmount: 0,
+      paidAmount: 0,
+      remainingAmount: 0,
+      status: 'unpaid',
+      payments: [],
+      breakdown: { deposit: 0, rent: 0, utilities: 0 }
+    };
     
     res.json({
       success: true,
       tenantId: req.params.id,
       tenantName: tenant.name,
       unitCode: tenant.unitCode,
-      currentMonth: monthlyTracking.month,
+      currentMonth: monthlyTracking.month || currentMonth,
       paymentStatus: monthlyTracking.status || 'unpaid',
       expected: monthlyTracking.expectedAmount || 0,
       paid: monthlyTracking.paidAmount || 0,
       remaining: monthlyTracking.remainingAmount || 0,
-      breakdown: monthlyTracking.breakdown || {},
+      breakdown: monthlyTracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
       payments: monthlyTracking.payments || [],
-      financialSummary: tenant.financialSummary || {},
+      financialSummary: tenant.financialSummary || {
+        totalPaid: 0,
+        arrears: 0,
+        balance: 0
+      },
       depositStatus: tenant.rentDeposit?.status || 'not_required'
     });
   } catch (error) {
+    console.error('Error fetching payment status:', error);
     res.status(500).json(createErrorResponse(500, 'Error fetching payment status', { error: error.message }));
   }
 });
 
-// GET /payments/monthly-report - Get monthly payment report for all tenants
+// ============================================
+// FIXED: GET /payments/monthly-report
+// ============================================
+
 app.get('/payments/monthly-report', async (req, res) => {
   try {
     const { month } = req.query; // Format: YYYY-MM
@@ -104,12 +177,56 @@ app.get('/payments/monthly-report', async (req, res) => {
       tenants: []
     };
     
+    // Get all units for reference
+    const unitsSnapshot = await getDocs(collection(db, 'units'));
+    const unitsMap = new Map();
+    unitsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      unitsMap.set(data.unitId, data);
+    });
+    
     for (const tenantDoc of tenantsSnapshot.docs) {
       const tenant = tenantDoc.data();
-      const tracking = tenant.monthlyPaymentTracking || {};
+      let tracking = tenant.monthlyPaymentTracking || null;
       
-      // Only include if tracking exists for target month
-      if (tracking.month === targetMonth) {
+      // Initialize tracking if it doesn't exist or is for wrong month
+      if (!tracking || tracking.month !== targetMonth) {
+        const unit = unitsMap.get(tenant.unitCode);
+        if (unit) {
+          const rent = parseFloat(unit.rentAmount) || 0;
+          const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+          const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+          const deposit = parseFloat(unit.depositAmount) || 0;
+          
+          // Check if tenant needs to pay deposit this month
+          const isNewTenant = tenant.moveInDate && 
+            new Date(tenant.moveInDate).getMonth() === new Date(targetMonth + '-01').getMonth() &&
+            new Date(tenant.moveInDate).getFullYear() === new Date(targetMonth + '-01').getFullYear();
+          
+          const depositPending = tenant.rentDeposit?.status === 'pending';
+          const includeDeposit = isNewTenant && depositPending && deposit > 0;
+          
+          const monthlyRent = rent + garbage + water;
+          const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+          
+          tracking = {
+            month: targetMonth,
+            expectedAmount: totalExpected,
+            paidAmount: 0,
+            remainingAmount: totalExpected,
+            status: 'unpaid',
+            payments: [],
+            breakdown: {
+              deposit: 0,
+              rent: 0,
+              utilities: 0
+            }
+          };
+        }
+      }
+      
+      // Only include if tracking exists
+      if (tracking && tracking.month === targetMonth) {
         report.summary.totalTenants++;
         report.summary.totalExpected += tracking.expectedAmount || 0;
         report.summary.totalReceived += tracking.paidAmount || 0;
@@ -131,13 +248,13 @@ app.get('/payments/monthly-report', async (req, res) => {
           tenantId: tenantDoc.id,
           name: tenant.name,
           unitCode: tenant.unitCode,
-          propertyName: tenant.propertyDetails?.propertyName,
-          status: tracking.status,
-          expected: tracking.expectedAmount,
-          paid: tracking.paidAmount,
-          remaining: tracking.remainingAmount,
-          breakdown: tracking.breakdown,
-          payments: tracking.payments
+          propertyName: tenant.propertyDetails?.propertyName || 'N/A',
+          status: tracking.status || 'unpaid',
+          expected: tracking.expectedAmount || 0,
+          paid: tracking.paidAmount || 0,
+          remaining: tracking.remainingAmount || 0,
+          breakdown: tracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
+          payments: tracking.payments || []
         });
       }
     }
@@ -151,31 +268,73 @@ app.get('/payments/monthly-report', async (req, res) => {
   }
 });
 
-// GET /payments/overdue - Get list of tenants with overdue payments
+// ============================================
+// FIXED: GET /payments/overdue
+// ============================================
+
 app.get('/payments/overdue', async (req, res) => {
   try {
     const currentMonth = getCurrentMonth();
     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
     
+    // Get all units for reference
+    const unitsSnapshot = await getDocs(collection(db, 'units'));
+    const unitsMap = new Map();
+    unitsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      unitsMap.set(data.unitId, data);
+    });
+    
     const overdueList = [];
     
     for (const tenantDoc of tenantsSnapshot.docs) {
       const tenant = tenantDoc.data();
-      const tracking = tenant.monthlyPaymentTracking || {};
+      let tracking = tenant.monthlyPaymentTracking || null;
+      
+      // Initialize tracking if needed
+      if (!tracking || tracking.month !== currentMonth) {
+        const unit = unitsMap.get(tenant.unitCode);
+        if (unit) {
+          const rent = parseFloat(unit.rentAmount) || 0;
+          const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+          const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+          const deposit = parseFloat(unit.depositAmount) || 0;
+          
+          const isNewTenant = tenant.moveInDate && 
+            new Date(tenant.moveInDate).getMonth() === new Date().getMonth() &&
+            new Date(tenant.moveInDate).getFullYear() === new Date().getFullYear();
+          
+          const depositPending = tenant.rentDeposit?.status === 'pending';
+          const includeDeposit = isNewTenant && depositPending && deposit > 0;
+          
+          const monthlyRent = rent + garbage + water;
+          const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+          
+          tracking = {
+            month: currentMonth,
+            expectedAmount: totalExpected,
+            paidAmount: 0,
+            remainingAmount: totalExpected,
+            status: 'unpaid',
+            payments: [],
+            breakdown: { deposit: 0, rent: 0, utilities: 0 }
+          };
+        }
+      }
       
       // Check if current month payment is not complete
-      if (tracking.month === currentMonth && tracking.status !== 'paid') {
+      if (tracking && tracking.month === currentMonth && tracking.status !== 'paid') {
         overdueList.push({
           tenantId: tenantDoc.id,
           name: tenant.name,
           phone: tenant.phone,
           unitCode: tenant.unitCode,
-          propertyName: tenant.propertyDetails?.propertyName,
+          propertyName: tenant.propertyDetails?.propertyName || 'N/A',
           expectedAmount: tracking.expectedAmount || 0,
           paidAmount: tracking.paidAmount || 0,
           remainingAmount: tracking.remainingAmount || 0,
-          status: tracking.status,
-          arrears: tenant.financialSummary?.arrears || 0
+          status: tracking.status || 'unpaid',
+          arrears: tenant.financialSummary?.arrears || tenant.arrears || 0
         });
       }
     }
@@ -189,9 +348,201 @@ app.get('/payments/overdue', async (req, res) => {
     });
     
   } catch (error) {
+    console.error('Error fetching overdue payments:', error);
     res.status(500).json(createErrorResponse(500, 'Error fetching overdue payments', { error: error.message }));
   }
 });
+
+// ============================================
+// FIXED: GET /tenants - Add safe defaults
+// ============================================
+
+app.get('/tenants', async (req, res) => {
+  try {
+    const snapshot = await getDocs(collection(db, 'tenants'));
+    const tenants = snapshot.docs.map(doc => {
+      const data = doc.data();
+      
+      // Ensure all required fields have safe defaults
+      return {
+        id: doc.id,
+        ...data,
+        rentDeposit: data.rentDeposit || {
+          amount: 0,
+          status: 'not_required',
+          paidDate: null,
+          refundStatus: 'not_applicable'
+        },
+        utilityFees: data.utilityFees || {
+          garbageFee: 0,
+          waterBill: 0,
+          electricity: 0,
+          other: 0
+        },
+        financialSummary: data.financialSummary || {
+          totalPaid: 0,
+          arrears: 0,
+          balance: 0
+        },
+        monthlyPaymentTracking: data.monthlyPaymentTracking || null
+      };
+    });
+    
+    res.json(tenants);
+  } catch (error) {
+    res.status(500).json(createErrorResponse(500, 'Error fetching tenants', { error: error.message }));
+  }
+});
+
+
+// ============================================
+// NEW ENDPOINTS TO ADD
+// ============================================
+
+// GET /tenants/:id/payment-status - Get detailed payment status for a tenant
+// app.get('/tenants/:id/payment-status', async (req, res) => {
+//   try {
+//     const tenantRef = doc(db, 'tenants', req.params.id);
+//     const tenantSnap = await getDoc(tenantRef);
+    
+//     if (!tenantSnap.exists()) {
+//       return res.status(404).json(createErrorResponse(404, 'Tenant not found'));
+//     }
+    
+//     const tenant = tenantSnap.data();
+//     const monthlyTracking = tenant.monthlyPaymentTracking || {};
+    
+//     res.json({
+//       success: true,
+//       tenantId: req.params.id,
+//       tenantName: tenant.name,
+//       unitCode: tenant.unitCode,
+//       currentMonth: monthlyTracking.month,
+//       paymentStatus: monthlyTracking.status || 'unpaid',
+//       expected: monthlyTracking.expectedAmount || 0,
+//       paid: monthlyTracking.paidAmount || 0,
+//       remaining: monthlyTracking.remainingAmount || 0,
+//       breakdown: monthlyTracking.breakdown || {},
+//       payments: monthlyTracking.payments || [],
+//       financialSummary: tenant.financialSummary || {},
+//       depositStatus: tenant.rentDeposit?.status || 'not_required'
+//     });
+//   } catch (error) {
+//     res.status(500).json(createErrorResponse(500, 'Error fetching payment status', { error: error.message }));
+//   }
+// });
+
+// GET /payments/monthly-report - Get monthly payment report for all tenants
+// app.get('/payments/monthly-report', async (req, res) => {
+//   try {
+//     const { month } = req.query; // Format: YYYY-MM
+//     const targetMonth = month || getCurrentMonth();
+    
+//     console.log(`📊 Generating monthly report for: ${targetMonth}`);
+    
+//     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+//     const report = {
+//       month: targetMonth,
+//       summary: {
+//         totalTenants: 0,
+//         paidInFull: 0,
+//         partialPayment: 0,
+//         unpaid: 0,
+//         totalExpected: 0,
+//         totalReceived: 0,
+//         totalRemaining: 0
+//       },
+//       tenants: []
+//     };
+    
+//     for (const tenantDoc of tenantsSnapshot.docs) {
+//       const tenant = tenantDoc.data();
+//       const tracking = tenant.monthlyPaymentTracking || {};
+      
+//       // Only include if tracking exists for target month
+//       if (tracking.month === targetMonth) {
+//         report.summary.totalTenants++;
+//         report.summary.totalExpected += tracking.expectedAmount || 0;
+//         report.summary.totalReceived += tracking.paidAmount || 0;
+//         report.summary.totalRemaining += tracking.remainingAmount || 0;
+        
+//         switch (tracking.status) {
+//           case 'paid':
+//             report.summary.paidInFull++;
+//             break;
+//           case 'partial':
+//             report.summary.partialPayment++;
+//             break;
+//           case 'unpaid':
+//             report.summary.unpaid++;
+//             break;
+//         }
+        
+//         report.tenants.push({
+//           tenantId: tenantDoc.id,
+//           name: tenant.name,
+//           unitCode: tenant.unitCode,
+//           propertyName: tenant.propertyDetails?.propertyName,
+//           status: tracking.status,
+//           expected: tracking.expectedAmount,
+//           paid: tracking.paidAmount,
+//           remaining: tracking.remainingAmount,
+//           breakdown: tracking.breakdown,
+//           payments: tracking.payments
+//         });
+//       }
+//     }
+    
+//     console.log(`✅ Report generated: ${report.summary.totalTenants} tenants`);
+//     res.json({ success: true, report });
+    
+//   } catch (error) {
+//     console.error('❌ Error generating monthly report:', error);
+//     res.status(500).json(createErrorResponse(500, 'Error generating report', { error: error.message }));
+//   }
+// });
+
+// GET /payments/overdue - Get list of tenants with overdue payments
+// app.get('/payments/overdue', async (req, res) => {
+//   try {
+//     const currentMonth = getCurrentMonth();
+//     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    
+//     const overdueList = [];
+    
+//     for (const tenantDoc of tenantsSnapshot.docs) {
+//       const tenant = tenantDoc.data();
+//       const tracking = tenant.monthlyPaymentTracking || {};
+      
+//       // Check if current month payment is not complete
+//       if (tracking.month === currentMonth && tracking.status !== 'paid') {
+//         overdueList.push({
+//           tenantId: tenantDoc.id,
+//           name: tenant.name,
+//           phone: tenant.phone,
+//           unitCode: tenant.unitCode,
+//           propertyName: tenant.propertyDetails?.propertyName,
+//           expectedAmount: tracking.expectedAmount || 0,
+//           paidAmount: tracking.paidAmount || 0,
+//           remainingAmount: tracking.remainingAmount || 0,
+//           status: tracking.status,
+//           arrears: tenant.financialSummary?.arrears || 0
+//         });
+//       }
+//     }
+    
+//     console.log(`📋 Found ${overdueList.length} tenants with incomplete payments`);
+//     res.json({
+//       success: true,
+//       month: currentMonth,
+//       count: overdueList.length,
+//       tenants: overdueList
+//     });
+    
+//   } catch (error) {
+//     res.status(500).json(createErrorResponse(500, 'Error fetching overdue payments', { error: error.message }));
+//   }
+// });
 
 // POST /payments/send-reminders - Send payment reminders to overdue tenants
 app.post('/payments/send-reminders', async (req, res) => {
@@ -751,15 +1102,15 @@ app.put('/properties/:id', async (req, res) => {
 });
 
 // GET /tenants - List all tenants
-app.get('/tenants', async (req, res) => {
-  try {
-    const snapshot = await getDocs(collection(db, 'tenants'));
-    const tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(tenants);
-  } catch (error) {
-    res.status(500).json(createErrorResponse(500, 'Error fetching tenants', { error: error.message }));
-  }
-});
+// app.get('/tenants', async (req, res) => {
+//   try {
+//     const snapshot = await getDocs(collection(db, 'tenants'));
+//     const tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+//     res.json(tenants);
+//   } catch (error) {
+//     res.status(500).json(createErrorResponse(500, 'Error fetching tenants', { error: error.message }));
+//   }
+// });
 
 // GET /tenants/:id - Get tenant details
 app.get('/tenants/:id', async (req, res) => {
