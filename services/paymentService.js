@@ -3,7 +3,7 @@
 // ============================================
 const { db } = require('../config/firebase');
 const { collection, getDocs, query, where } = require('firebase/firestore');
-const { getCurrentMonth, isMovedInThisMonth } = require('../utils/dateHelper');
+const { getCurrentMonth } = require('../utils/dateHelper');
 const { PAYMENT_STATUS } = require('../config/constants');
 const smsService = require('./smsService');
 
@@ -50,38 +50,47 @@ class PaymentService {
   }
 
   /**
-   * Check if tenant should be charged deposit in the target month
+   * Get aggregated payment data for a tenant in a specific month
    */
-  shouldIncludeDepositForMonth(tenant, unit, targetMonth) {
-    if (!tenant.moveInDate || !unit.depositAmount) {
-      return false;
+  async getTenantMonthlyPayments(tenantId, targetMonth) {
+    const paymentsQuery = query(
+      collection(db, 'financial_records'),
+      where('tenantId', '==', tenantId),
+      where('paymentMonth', '==', targetMonth)
+    );
+    
+    const paymentsSnapshot = await getDocs(paymentsQuery);
+    const payments = paymentsSnapshot.docs.map(doc => doc.data());
+    
+    if (payments.length === 0) {
+      return null;
     }
-
-    const [year, month] = targetMonth.split('-').map(Number);
-    const moveInDate = new Date(tenant.moveInDate);
-    const moveInYear = moveInDate.getFullYear();
-    const moveInMonth = moveInDate.getMonth() + 1;
-
-    // Deposit is only charged in the month tenant moved in
-    if (moveInYear === year && moveInMonth === month) {
-      const depositStatus = tenant.rentDeposit?.status || PAYMENT_STATUS.PENDING;
-      return depositStatus === PAYMENT_STATUS.PENDING;
-    }
-
-    return false;
+    
+    // Get the most recent payment for monthly tracking status
+    const sortedPayments = payments.sort((a, b) => 
+      new Date(b.timestamp) - new Date(a.timestamp)
+    );
+    
+    const latestPayment = sortedPayments[0];
+    
+    return {
+      totalPaid: payments.reduce((sum, p) => sum + p.amount, 0),
+      paymentCount: payments.length,
+      payments: sortedPayments,
+      monthlyTracking: latestPayment.monthlyTracking,
+      lastPaymentDate: latestPayment.timestamp
+    };
   }
 
   async getPaymentStatus(month) {
     const targetMonth = month || getCurrentMonth();
     console.log(`📊 Getting payment status for: ${targetMonth}`);
 
-    const paymentsSnapshot = await getDocs(collection(db, 'rental_payments'));
     const unitsSnapshot = await getDocs(collection(db, 'units'));
     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
 
     const allUnits = unitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const allPayments = paymentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter units that existed in target month
     const units = allUnits.filter(unit => this.isRecordActiveInMonth(unit, targetMonth));
@@ -91,22 +100,31 @@ class PaymentService {
 
     const status = [];
 
-    units.forEach(unit => {
+    for (const unit of units) {
       const tenant = tenants.find(t => t.unitCode === unit.code);
-      const unitPayments = allPayments.filter(p => 
-        p.unitId === unit.id && 
-        p.date?.slice(0, 7) === targetMonth
-      );
-      const payment = unitPayments.find(p => p.date.slice(0, 7) === targetMonth);
-
+      
+      if (!tenant) {
+        status.push({
+          unitCode: unit.code,
+          month: targetMonth,
+          status: 'Vacant',
+          amount: 0,
+          tenant: 'Vacant',
+        });
+        continue;
+      }
+      
+      const monthlyPayments = await this.getTenantMonthlyPayments(tenant.id, targetMonth);
+      
       status.push({
         unitCode: unit.code,
         month: targetMonth,
-        status: payment ? 'Paid' : 'Unpaid',
-        amount: payment ? payment.amount : 0,
-        tenant: tenant ? tenant.name : 'Vacant',
+        status: monthlyPayments ? 'Paid' : 'Unpaid',
+        amount: monthlyPayments ? monthlyPayments.totalPaid : 0,
+        tenant: tenant.name,
+        paymentStatus: monthlyPayments?.monthlyTracking?.status || 'unpaid'
       });
-    });
+    }
 
     return status;
   }
@@ -115,10 +133,7 @@ class PaymentService {
     const targetMonth = month || getCurrentMonth();
     console.log(`📊 Getting payment volume for: ${targetMonth}`);
 
-    const paymentsSnapshot = await getDocs(collection(db, 'rental_payments'));
     const propertiesSnapshot = await getDocs(collection(db, 'properties'));
-
-    const allPayments = paymentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter properties that existed in target month
@@ -126,8 +141,13 @@ class PaymentService {
       this.isRecordActiveInMonth(property, targetMonth)
     );
 
-    // Filter payments for target month
-    const monthPayments = allPayments.filter(p => p.date?.slice(0, 7) === targetMonth);
+    // Get all financial records for the target month
+    const financialRecordsQuery = query(
+      collection(db, 'financial_records'),
+      where('paymentMonth', '==', targetMonth)
+    );
+    const financialRecordsSnapshot = await getDocs(financialRecordsQuery);
+    const monthPayments = financialRecordsSnapshot.docs.map(doc => doc.data());
 
     const volume = [];
 
@@ -141,6 +161,7 @@ class PaymentService {
           property: property.name,
           month: targetMonth,
           total,
+          paymentCount: propertyPayments.length
         });
       }
     });
@@ -153,8 +174,6 @@ class PaymentService {
     console.log(`📊 Generating monthly report for: ${targetMonth}`);
     
     const [year, monthNum] = targetMonth.split('-').map(Number);
-    const monthStart = new Date(year, monthNum - 1, 1);
-    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
 
     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
     const unitsSnapshot = await getDocs(collection(db, 'units'));
@@ -178,6 +197,23 @@ class PaymentService {
     );
 
     console.log(`✅ Active records - Tenants: ${activeTenants.length}, Units: ${activeUnits.length}, Properties: ${activeProperties.length}`);
+
+    // Get all financial records for the target month
+    const financialRecordsQuery = query(
+      collection(db, 'financial_records'),
+      where('paymentMonth', '==', targetMonth)
+    );
+    const financialRecordsSnapshot = await getDocs(financialRecordsQuery);
+    
+    // Group financial records by tenant
+    const paymentsByTenant = new Map();
+    financialRecordsSnapshot.docs.forEach(doc => {
+      const record = doc.data();
+      if (!paymentsByTenant.has(record.tenantId)) {
+        paymentsByTenant.set(record.tenantId, []);
+      }
+      paymentsByTenant.get(record.tenantId).push(record);
+    });
 
     const report = {
       month: targetMonth,
@@ -204,76 +240,109 @@ class PaymentService {
     });
     
     for (const tenant of activeTenants) {
-      let tracking = tenant.monthlyPaymentTracking || null;
-      
-      // Verify tracking is for the correct month, otherwise recalculate
-      if (!tracking || tracking.month !== targetMonth) {
-        const unit = unitsMap.get(tenant.unitCode);
-        if (!unit) {
-          console.warn(`⚠️ Unit ${tenant.unitCode} not found for tenant ${tenant.name}`);
-          continue;
-        }
+      const unit = unitsMap.get(tenant.unitCode);
+      if (!unit) {
+        console.warn(`⚠️ Unit ${tenant.unitCode} not found for tenant ${tenant.name}`);
+        continue;
+      }
 
-        const rent = parseFloat(unit.rentAmount) || 0;
-        const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-        const water = parseFloat(unit.utilityFees?.waterBill) || 0;
-        const deposit = parseFloat(unit.depositAmount) || 0;
-        
-        const includeDeposit = this.shouldIncludeDepositForMonth(tenant, unit, targetMonth);
-        
-        const monthlyRent = rent + garbage + water;
-        const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-        
+      const tenantPayments = paymentsByTenant.get(tenant.id) || [];
+      
+      // Calculate expected amounts for this month
+      const rent = parseFloat(unit.rentAmount) || 0;
+      const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+      const deposit = parseFloat(unit.depositAmount) || 0;
+      
+      // Check if deposit should be included this month
+      const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
+      const moveInYear = moveInDate?.getFullYear();
+      const moveInMonth = moveInDate ? moveInDate.getMonth() + 1 : null;
+      const isFirstMonth = moveInYear === year && moveInMonth === monthNum;
+      const depositPending = tenant.rentDeposit?.status === 'pending';
+      const includeDeposit = isFirstMonth && depositPending;
+      
+      const monthlyRent = rent + garbage + water;
+      const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+      
+      // Get tracking data from most recent payment or calculate fresh
+      let tracking;
+      if (tenantPayments.length > 0) {
+        // Sort by timestamp descending
+        const sortedPayments = tenantPayments.sort((a, b) => 
+          new Date(b.timestamp) - new Date(a.timestamp)
+        );
+        tracking = sortedPayments[0].monthlyTracking;
+      } else {
+        // No payments for this month
         tracking = {
-          month: targetMonth,
-          expectedAmount: totalExpected,
-          paidAmount: 0,
+          expectedTotal: totalExpected,
+          totalPaid: 0,
           remainingAmount: totalExpected,
           status: PAYMENT_STATUS.UNPAID,
-          payments: [],
           breakdown: {
-            deposit: includeDeposit ? deposit : 0,
-            rent: rent,
-            utilities: garbage + water
+            deposit: {
+              required: includeDeposit ? deposit : 0,
+              paid: 0,
+              remaining: includeDeposit ? deposit : 0
+            },
+            rent: {
+              required: rent,
+              paid: 0,
+              remaining: rent
+            },
+            utilities: {
+              required: garbage + water,
+              paid: 0,
+              remaining: garbage + water
+            }
           }
         };
       }
       
-      if (tracking && tracking.month === targetMonth) {
-        report.summary.totalTenants++;
-        report.summary.totalExpected += tracking.expectedAmount || 0;
-        report.summary.totalReceived += tracking.paidAmount || 0;
-        report.summary.totalRemaining += tracking.remainingAmount || 0;
-        
-        switch (tracking.status) {
-          case PAYMENT_STATUS.PAID:
-            report.summary.paidInFull++;
-            break;
-          case PAYMENT_STATUS.PARTIAL:
-            report.summary.partialPayment++;
-            break;
-          case PAYMENT_STATUS.UNPAID:
-            report.summary.unpaid++;
-            break;
-        }
-
-        const property = propertiesMap.get(tenant.propertyId);
-        
-        report.tenants.push({
-          tenantId: tenant.id,
-          name: tenant.name,
-          unitCode: tenant.unitCode,
-          propertyName: property?.name || tenant.propertyDetails?.propertyName || 'N/A',
-          status: tracking.status || PAYMENT_STATUS.UNPAID,
-          expected: tracking.expectedAmount || 0,
-          paid: tracking.paidAmount || 0,
-          remaining: tracking.remainingAmount || 0,
-          breakdown: tracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
-          payments: tracking.payments || [],
-          moveInDate: tenant.moveInDate,
-          moveOutDate: tenant.moveOutDate
-        });
+      report.summary.totalTenants++;
+      report.summary.totalExpected += tracking.expectedTotal || 0;
+      report.summary.totalReceived += tracking.totalPaid || 0;
+      report.summary.totalRemaining += tracking.remainingAmount || 0;
+      
+      switch (tracking.status) {
+        case PAYMENT_STATUS.PAID:
+          report.summary.paidInFull++;
+          break;
+        case PAYMENT_STATUS.PARTIAL:
+          report.summary.partialPayment++;
+          break;
+        case PAYMENT_STATUS.UNPAID:
+          report.summary.unpaid++;
+          break;
       }
+
+      const property = propertiesMap.get(tenant.propertyId);
+      
+      report.tenants.push({
+        tenantId: tenant.id,
+        name: tenant.name,
+        unitCode: tenant.unitCode,
+        propertyName: property?.name || tenant.propertyDetails?.propertyName || 'N/A',
+        status: tracking.status || PAYMENT_STATUS.UNPAID,
+        expected: tracking.expectedTotal || 0,
+        paid: tracking.totalPaid || 0,
+        remaining: tracking.remainingAmount || 0,
+        breakdown: {
+          deposit: tracking.breakdown?.deposit?.paid || 0,
+          rent: tracking.breakdown?.rent?.paid || 0,
+          utilities: tracking.breakdown?.utilities?.paid || 0
+        },
+        payments: tenantPayments.map(p => ({
+          transactionId: p.transactionId,
+          amount: p.amount,
+          date: p.paymentDate,
+          timestamp: p.timestamp,
+          allocation: p.allocation
+        })),
+        moveInDate: tenant.moveInDate,
+        moveOutDate: tenant.moveOutDate
+      });
     }
     
     console.log(`✅ Report generated: ${report.summary.totalTenants} active tenants for ${targetMonth}`);
@@ -304,45 +373,71 @@ class PaymentService {
       unitsMap.set(unit.unitId || unit.code, unit);
     });
     
+    // Get financial records for the target month
+    const financialRecordsQuery = query(
+      collection(db, 'financial_records'),
+      where('paymentMonth', '==', targetMonth)
+    );
+    const financialRecordsSnapshot = await getDocs(financialRecordsQuery);
+    
+    const paymentsByTenant = new Map();
+    financialRecordsSnapshot.docs.forEach(doc => {
+      const record = doc.data();
+      if (!paymentsByTenant.has(record.tenantId)) {
+        paymentsByTenant.set(record.tenantId, []);
+      }
+      paymentsByTenant.get(record.tenantId).push(record);
+    });
+    
     const overdueList = [];
+    const [year, monthNum] = targetMonth.split('-').map(Number);
     
     for (const tenant of activeTenants) {
-      let tracking = tenant.monthlyPaymentTracking || null;
-      
-      if (!tracking || tracking.month !== targetMonth) {
-        const unit = unitsMap.get(tenant.unitCode);
-        if (!unit) continue;
+      const unit = unitsMap.get(tenant.unitCode);
+      if (!unit) continue;
 
-        const rent = parseFloat(unit.rentAmount) || 0;
-        const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-        const water = parseFloat(unit.utilityFees?.waterBill) || 0;
-        const deposit = parseFloat(unit.depositAmount) || 0;
-        
-        const includeDeposit = this.shouldIncludeDepositForMonth(tenant, unit, targetMonth);
-        
-        const monthlyRent = rent + garbage + water;
-        const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-        
+      const tenantPayments = paymentsByTenant.get(tenant.id) || [];
+      
+      // Calculate expected amounts
+      const rent = parseFloat(unit.rentAmount) || 0;
+      const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+      const deposit = parseFloat(unit.depositAmount) || 0;
+      
+      const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
+      const moveInYear = moveInDate?.getFullYear();
+      const moveInMonth = moveInDate ? moveInDate.getMonth() + 1 : null;
+      const isFirstMonth = moveInYear === year && moveInMonth === monthNum;
+      const depositPending = tenant.rentDeposit?.status === 'pending';
+      const includeDeposit = isFirstMonth && depositPending;
+      
+      const monthlyRent = rent + garbage + water;
+      const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+      
+      let tracking;
+      if (tenantPayments.length > 0) {
+        const sortedPayments = tenantPayments.sort((a, b) => 
+          new Date(b.timestamp) - new Date(a.timestamp)
+        );
+        tracking = sortedPayments[0].monthlyTracking;
+      } else {
         tracking = {
-          month: targetMonth,
-          expectedAmount: totalExpected,
-          paidAmount: 0,
+          expectedTotal: totalExpected,
+          totalPaid: 0,
           remainingAmount: totalExpected,
-          status: PAYMENT_STATUS.UNPAID,
-          payments: [],
-          breakdown: { deposit: includeDeposit ? deposit : 0, rent: rent, utilities: garbage + water }
+          status: PAYMENT_STATUS.UNPAID
         };
       }
       
-      if (tracking && tracking.month === targetMonth && tracking.status !== PAYMENT_STATUS.PAID) {
+      if (tracking.status !== PAYMENT_STATUS.PAID) {
         overdueList.push({
           tenantId: tenant.id,
           name: tenant.name,
           phone: tenant.phone,
           unitCode: tenant.unitCode,
           propertyName: tenant.propertyDetails?.propertyName || 'N/A',
-          expectedAmount: tracking.expectedAmount || 0,
-          paidAmount: tracking.paidAmount || 0,
+          expectedAmount: tracking.expectedTotal || 0,
+          paidAmount: tracking.totalPaid || 0,
           remainingAmount: tracking.remainingAmount || 0,
           status: tracking.status || PAYMENT_STATUS.UNPAID,
           arrears: tenant.financialSummary?.arrears || tenant.arrears || 0,
@@ -380,11 +475,11 @@ class PaymentService {
     );
 
     const arrears = activeTenants
-      .filter(t => (t.arrears || 0) > 0)
+      .filter(t => (t.financialSummary?.arrears || t.arrears || 0) > 0)
       .map(t => ({
         tenant: t.name,
         unitCode: t.unitCode,
-        amount: t.arrears,
+        amount: t.financialSummary?.arrears || t.arrears,
         propertyId: t.propertyId,
       }));
 
@@ -408,60 +503,51 @@ class PaymentService {
     const targetMonth = month || getCurrentMonth();
     console.log(`📊 Sending reminders for: ${targetMonth}`);
 
-    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
-    const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-    // Filter tenants active in target month
-    const activeTenants = allTenants.filter(tenant => 
-      this.isRecordActiveInMonth(tenant, targetMonth)
-    );
+    const overdueData = await this.getOverduePayments(targetMonth);
+    const overdueTenants = overdueData.tenants;
     
     const remindersSent = [];
     const remindersFailed = [];
     
-    for (const tenant of activeTenants) {
-      const tracking = tenant.monthlyPaymentTracking || {};
-      
-      if (tracking.month === targetMonth && tracking.status !== PAYMENT_STATUS.PAID) {
-        try {
-          const debt = {
-            debtCode: tenant.unitCode,
-            storeOwner: { name: tenant.name },
-            remainingAmount: tracking.remainingAmount || 0,
-            paymentMethod: 'mpesa',
-            dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-          };
+    for (const tenantData of overdueTenants) {
+      try {
+        const debt = {
+          debtCode: tenantData.unitCode,
+          storeOwner: { name: tenantData.name },
+          remainingAmount: tenantData.remainingAmount,
+          paymentMethod: 'mpesa',
+          dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        };
+        
+        const smsMessage = smsService.generateInvoiceSMS(debt, tenantData.phone);
+        const smsResult = await smsService.sendSMS(tenantData.phone, smsMessage, tenantData.tenantId, tenantData.unitCode);
+        
+        if (smsResult.success) {
+          remindersSent.push({
+            tenantId: tenantData.tenantId,
+            name: tenantData.name,
+            phone: tenantData.phone,
+            amount: tenantData.remainingAmount,
+            messageId: smsResult.messageId
+          });
           
-          const smsMessage = smsService.generateInvoiceSMS(debt, tenant.phone);
-          const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.id, tenant.unitCode);
-          
-          if (smsResult.success) {
-            remindersSent.push({
-              tenantId: tenant.id,
-              name: tenant.name,
-              phone: tenant.phone,
-              amount: tracking.remainingAmount,
-              messageId: smsResult.messageId
-            });
-            
-            await updateDoc(doc(db, 'tenants', tenant.id), {
-              lastReminderSent: new Date().toISOString(),
-              reminderCount: (tenant.reminderCount || 0) + 1
-            });
-          } else {
-            remindersFailed.push({
-              tenantId: tenant.id,
-              name: tenant.name,
-              error: smsResult.error
-            });
-          }
-        } catch (error) {
+          await updateDoc(doc(db, 'tenants', tenantData.tenantId), {
+            lastReminderSent: new Date().toISOString(),
+            reminderCount: (tenantData.reminderCount || 0) + 1
+          });
+        } else {
           remindersFailed.push({
-            tenantId: tenant.id,
-            name: tenant.name,
-            error: error.message
+            tenantId: tenantData.tenantId,
+            name: tenantData.name,
+            error: smsResult.error
           });
         }
+      } catch (error) {
+        remindersFailed.push({
+          tenantId: tenantData.tenantId,
+          name: tenantData.name,
+          error: error.message
+        });
       }
     }
     

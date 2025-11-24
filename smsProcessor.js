@@ -46,45 +46,12 @@ const isNewTenant = (moveInDate) => {
          moveIn.getFullYear() === now.getFullYear();
 };
 
-// Initialize monthly payment tracking for a tenant
-const initializeMonthlyPaymentTracking = (tenant, unit) => {
-  const currentMonth = getCurrentMonth();
-  const rent = parseFloat(unit.rentAmount) || 0;
-  const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-  const water = parseFloat(unit.utilityFees?.waterBill) || 0;
-  const deposit = parseFloat(unit.depositAmount) || 0;
-  
-  // Check if this is the tenant's first month and deposit is still pending
-  const isFirstMonth = isNewTenant(tenant.moveInDate);
-  const depositPending = tenant.rentDeposit?.status === 'pending';
-  const includeDeposit = isFirstMonth && depositPending && deposit > 0;
-  
-  const monthlyRent = rent + garbage + water;
-  const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-  
-  return {
-    month: currentMonth,
-    expectedAmount: totalExpected,
-    paidAmount: 0,
-    remainingAmount: totalExpected,
-    status: 'unpaid',
-    payments: [],
-    breakdown: {
-      deposit: 0,
-      rent: 0,
-      utilities: 0
-    },
-    includesDeposit: includeDeposit,
-    depositRequired: includeDeposit ? deposit : 0
-  };
-};
-
 const parseMpesaWebhook = (webhookData) => {
   try {
     const { body } = webhookData;
     if (!body) throw new Error('No SMS body provided');
 
-    // THIS REGEX IS TESTED WITH YOUR EXACT MESSAGE
+    // Parse M-Pesa SMS format
     const regex = /^(\w+)\s+Confirmed\.?\s+on\s+\d{1,2}\/\d{1,2}\/\d{2,4}.*?Ksh([\d,.]+)\s+received\s+from\s+([^0-9]+?)\s+(\d{10,13}).*?Account\s+Number\s+(\d{9,12})/i;
 
     const match = body.match(regex);
@@ -96,14 +63,14 @@ const parseMpesaWebhook = (webhookData) => {
 
     const [, transactionId, amountStr, senderName, senderPhone, accountNumber] = match;
 
-    // Fix amount: "50.00" → 50, "4,100.00" → 4100
+    // Parse amount
     const amount = parseFloat(amountStr.replace(/,/g, ''));
 
     if (isNaN(amount)) {
       throw new Error('Failed to parse amount from SMS');
     }
 
-    // Extract date: "20/9/25" → 2025-09-20
+    // Extract and parse date
     const dateMatch = body.match(/on\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
     if (!dateMatch) throw new Error('Date not found in SMS');
     
@@ -114,8 +81,8 @@ const parseMpesaWebhook = (webhookData) => {
     return {
       success: true,
       data: {
-        transactionId: transactionId.trim(),           // TJNEWID0 only
-        amount: amount,                                // 50
+        transactionId: transactionId.trim(),
+        amount: amount,
         senderName: senderName.trim(),
         senderPhone: senderPhone.trim(),
         senderPhoneNormalized: normalizePhoneNumber(senderPhone),
@@ -133,6 +100,7 @@ const parseMpesaWebhook = (webhookData) => {
     };
   }
 };
+
 const processRentalPayment = async (paymentData) => {
   try {
     const { 
@@ -143,20 +111,23 @@ const processRentalPayment = async (paymentData) => {
       senderPhoneNormalized,
       accountNumberNormalized,
       paymentMonth,
-      date
+      date,
+      senderName
     } = paymentData;
 
+    const timestamp = new Date().toISOString();
     console.log('🔍 Processing payment for month:', paymentMonth);
     console.log('  - Amount: KSh', amount);
     console.log('  - Account:', accountNumber, '→', accountNumberNormalized);
 
     // ============================================
-    // 1️⃣ FIND TENANT
+    // 1️⃣ FIND TENANT BY PHONE NUMBER
     // ============================================
     
     let tenant = null;
     let matchStrategy = '';
 
+    // Try matching with account number first
     const tenantsByAccountQuery = query(
       collection(db, 'tenants'), 
       where('phone', '==', accountNumberNormalized)
@@ -165,8 +136,9 @@ const processRentalPayment = async (paymentData) => {
 
     if (!tenantsByAccountSnapshot.empty) {
       tenant = { id: tenantsByAccountSnapshot.docs[0].id, ...tenantsByAccountSnapshot.docs[0].data() };
-      matchStrategy = 'account number';
+      matchStrategy = 'account_number';
     } else {
+      // Try matching with sender phone
       const tenantsByPhoneQuery = query(
         collection(db, 'tenants'), 
         where('phone', '==', senderPhoneNormalized)
@@ -175,8 +147,9 @@ const processRentalPayment = async (paymentData) => {
       
       if (!tenantsByPhoneSnapshot.empty) {
         tenant = { id: tenantsByPhoneSnapshot.docs[0].id, ...tenantsByPhoneSnapshot.docs[0].data() };
-        matchStrategy = 'sender phone';
+        matchStrategy = 'sender_phone';
       } else {
+        // Fallback: manual scan
         const allTenantsSnapshot = await getDocs(collection(db, 'tenants'));
         for (const doc of allTenantsSnapshot.docs) {
           const data = doc.data();
@@ -185,7 +158,7 @@ const processRentalPayment = async (paymentData) => {
           if (normalizedTenantPhone === accountNumberNormalized || 
               normalizedTenantPhone === senderPhoneNormalized) {
             tenant = { id: doc.id, ...data };
-            matchStrategy = 'manual matching';
+            matchStrategy = 'manual_scan';
             break;
           }
         }
@@ -213,222 +186,209 @@ const processRentalPayment = async (paymentData) => {
     const unitsSnapshot = await getDocs(unitsQuery);
     
     if (unitsSnapshot.empty) {
-      return { success: false, error: 'Unit not found' };
+      return { success: false, error: 'Unit not found for tenant' };
     }
     
     const unitDoc = unitsSnapshot.docs[0];
-    const unit = unitDoc.data();
+    const unit = { id: unitDoc.id, ...unitDoc.data() };
 
     // ============================================
-    // 3️⃣ INITIALIZE OR GET MONTHLY TRACKING
+    // 3️⃣ CALCULATE PAYMENT ALLOCATION
     // ============================================
     
-    const currentMonth = getCurrentMonth();
-    let monthlyTracking = tenant.monthlyPaymentTracking || null;
+    const rentAmount = parseFloat(unit.rentAmount) || 0;
+    const garbageFee = parseFloat(unit.utilityFees?.garbageFee) || 0;
+    const waterBill = parseFloat(unit.utilityFees?.waterBill) || 0;
+    const utilitiesAmount = garbageFee + waterBill;
+    const depositAmount = parseFloat(unit.depositAmount) || 0;
     
-    // Initialize tracking if it doesn't exist or is for a different month
-    if (!monthlyTracking || monthlyTracking.month !== paymentMonth) {
-      monthlyTracking = initializeMonthlyPaymentTracking(tenant, unit);
-      monthlyTracking.month = paymentMonth;
-    }
+    // Check if deposit is required this month
+    const isFirstMonth = isNewTenant(tenant.moveInDate);
+    const depositPending = tenant.rentDeposit?.status === 'pending';
+    const depositRequired = isFirstMonth && depositPending ? depositAmount : 0;
     
-    // ============================================
-    // 4️⃣ SMART PAYMENT ALLOCATION
-    // ============================================
+    console.log('💰 Payment Allocation:');
+    console.log(`   - New Tenant: ${isFirstMonth}`);
+    console.log(`   - Deposit Required: KSh ${depositRequired}`);
+    console.log(`   - Rent: KSh ${rentAmount}`);
+    console.log(`   - Utilities: KSh ${utilitiesAmount}`);
     
-    console.log('💰 Payment Allocation Logic:');
-    console.log(`   - Is New Tenant: ${isNewTenant(tenant.moveInDate)}`);
-    console.log(`   - Deposit Status: ${tenant.rentDeposit?.status}`);
-    console.log(`   - Deposit Required This Month: ${monthlyTracking.depositRequired || 0}`);
+    // Get previous payments for this month
+    const monthPaymentsQuery = query(
+      collection(db, 'financial_records'),
+      where('tenantId', '==', tenant.id),
+      where('paymentMonth', '==', paymentMonth)
+    );
+    const monthPaymentsSnapshot = await getDocs(monthPaymentsQuery);
     
+    let depositAlreadyPaid = 0;
+    let rentAlreadyPaid = 0;
+    let utilitiesAlreadyPaid = 0;
+    
+    monthPaymentsSnapshot.docs.forEach(doc => {
+      const payment = doc.data();
+      depositAlreadyPaid += payment.allocation?.deposit || 0;
+      rentAlreadyPaid += payment.allocation?.rent || 0;
+      utilitiesAlreadyPaid += payment.allocation?.utilities || 0;
+    });
+    
+    // Calculate remaining amounts
+    const depositRemaining = Math.max(0, depositRequired - depositAlreadyPaid);
+    const rentRemaining = Math.max(0, rentAmount - rentAlreadyPaid);
+    const utilitiesRemaining = Math.max(0, utilitiesAmount - utilitiesAlreadyPaid);
+    
+    // Allocate payment
     let remainingPayment = amount;
     let allocatedToDeposit = 0;
     let allocatedToRent = 0;
     let allocatedToUtilities = 0;
     
-    // Get expected amounts
-    const rentAmount = parseFloat(unit.rentAmount) || 0;
-    const utilitiesAmount = (parseFloat(unit.utilityFees?.garbageFee) || 0) + 
-                           (parseFloat(unit.utilityFees?.waterBill) || 0);
-    const depositRequired = monthlyTracking.depositRequired || 0;
-    
-    // Get already paid amounts this month
-    const depositAlreadyPaid = monthlyTracking.breakdown?.deposit || 0;
-    const rentAlreadyPaid = monthlyTracking.breakdown?.rent || 0;
-    const utilitiesAlreadyPaid = monthlyTracking.breakdown?.utilities || 0;
-    
-    // Calculate remaining amounts to pay
-    const depositRemaining = Math.max(0, depositRequired - depositAlreadyPaid);
-    const rentRemaining = Math.max(0, rentAmount - rentAlreadyPaid);
-    const utilitiesRemaining = Math.max(0, utilitiesAmount - utilitiesAlreadyPaid);
-    
-    console.log('📊 Payment Breakdown:');
-    console.log(`   - Total Payment: KSh ${amount}`);
-    console.log(`   - Deposit Remaining: KSh ${depositRemaining}`);
-    console.log(`   - Rent Remaining: KSh ${rentRemaining}`);
-    console.log(`   - Utilities Remaining: KSh ${utilitiesRemaining}`);
-    
-    // PRIORITY 1: Deposit (for new tenants only)
+    // Priority 1: Deposit
     if (depositRemaining > 0 && remainingPayment > 0) {
       allocatedToDeposit = Math.min(remainingPayment, depositRemaining);
       remainingPayment -= allocatedToDeposit;
-      console.log(`   ✓ Allocated to Deposit: KSh ${allocatedToDeposit} (Remaining: ${remainingPayment})`);
     }
     
-    // PRIORITY 2: Rent
+    // Priority 2: Rent
     if (rentRemaining > 0 && remainingPayment > 0) {
       allocatedToRent = Math.min(remainingPayment, rentRemaining);
       remainingPayment -= allocatedToRent;
-      console.log(`   ✓ Allocated to Rent: KSh ${allocatedToRent} (Remaining: ${remainingPayment})`);
     }
     
-    // PRIORITY 3: Utilities
+    // Priority 3: Utilities
     if (utilitiesRemaining > 0 && remainingPayment > 0) {
       allocatedToUtilities = Math.min(remainingPayment, utilitiesRemaining);
       remainingPayment -= allocatedToUtilities;
-      console.log(`   ✓ Allocated to Utilities: KSh ${allocatedToUtilities} (Remaining: ${remainingPayment})`);
     }
     
-    // Any excess remains unallocated (could be applied to future months or arrears)
-    if (remainingPayment > 0) {
-      console.log(`   ℹ️ Excess Payment: KSh ${remainingPayment} (Will reduce arrears)`);
+    console.log(`   ✓ Deposit: KSh ${allocatedToDeposit}`);
+    console.log(`   ✓ Rent: KSh ${allocatedToRent}`);
+    console.log(`   ✓ Utilities: KSh ${allocatedToUtilities}`);
+    console.log(`   ✓ Excess: KSh ${remainingPayment}`);
+    
+    // Calculate totals for this month after this payment
+    const totalDepositPaid = depositAlreadyPaid + allocatedToDeposit;
+    const totalRentPaid = rentAlreadyPaid + allocatedToRent;
+    const totalUtilitiesPaid = utilitiesAlreadyPaid + allocatedToUtilities;
+    const totalMonthlyPaid = totalDepositPaid + totalRentPaid + totalUtilitiesPaid;
+    
+    const expectedTotal = depositRequired + rentAmount + utilitiesAmount;
+    const remainingTotal = Math.max(0, expectedTotal - totalMonthlyPaid);
+    
+    // Determine payment status for this month
+    let monthlyStatus = 'unpaid';
+    if (totalMonthlyPaid >= expectedTotal) {
+      monthlyStatus = 'paid';
+    } else if (totalMonthlyPaid > 0) {
+      monthlyStatus = 'partial';
     }
     
     // ============================================
-    // 5️⃣ UPDATE MONTHLY TRACKING
+    // 4️⃣ CREATE FINANCIAL RECORD
     // ============================================
     
-    monthlyTracking.paidAmount += amount;
-    monthlyTracking.breakdown.deposit += allocatedToDeposit;
-    monthlyTracking.breakdown.rent += allocatedToRent;
-    monthlyTracking.breakdown.utilities += allocatedToUtilities;
-    monthlyTracking.remainingAmount = Math.max(0, monthlyTracking.expectedAmount - monthlyTracking.paidAmount);
-    
-    // Update status
-    if (monthlyTracking.paidAmount >= monthlyTracking.expectedAmount) {
-      monthlyTracking.status = 'paid';
-    } else if (monthlyTracking.paidAmount > 0) {
-      monthlyTracking.status = 'partial';
-    } else {
-      monthlyTracking.status = 'unpaid';
-    }
-    
-    // Add payment to tracking
-    monthlyTracking.payments.push({
+    const financialRecord = {
+      // Identifiers
       transactionId,
-      amount,
-      date: date,
-      timestamp: new Date().toISOString(),
-      allocation: {
-        deposit: allocatedToDeposit,
-        rent: allocatedToRent,
-        utilities: allocatedToUtilities
-      }
-    });
-
-    // ============================================
-    // 6️⃣ UPDATE FINANCIAL SUMMARY & ARREARS
-    // ============================================
-    
-    const currentArrears = tenant.financialSummary?.arrears || tenant.arrears || 0;
-    const newArrears = Math.max(0, currentArrears - amount);
-    const totalPaid = (tenant.financialSummary?.totalPaid || 0) + amount;
-    const balance = (tenant.financialSummary?.balance || 0) + amount;
-    
-    // Update deposit status if fully paid
-    let updatedDepositStatus = tenant.rentDeposit?.status || 'not_required';
-    let depositPaidDate = tenant.rentDeposit?.paidDate || null;
-    
-    if (depositRequired > 0 && (depositAlreadyPaid + allocatedToDeposit) >= depositRequired) {
-      updatedDepositStatus = 'paid';
-      depositPaidDate = new Date().toISOString();
-      console.log('✅ Deposit fully paid!');
-    }
-
-    // ============================================
-    // 7️⃣ STORE PAYMENT RECORD
-    // ============================================
-    
-    const paymentRef = doc(db, 'rental_payments', transactionId);
-    await setDoc(paymentRef, {
-      ...paymentData,
       tenantId: tenant.id,
       tenantName: tenant.name,
+      tenantPhone: tenant.phone,
+      unitId: unit.id,
       unitCode: tenant.unitCode,
       propertyId: tenant.propertyId,
       propertyName: tenant.propertyDetails?.propertyName || '',
-      timestamp: new Date().toISOString(),
-      processed: true,
-      matchStrategy,
+      
+      // Payment details
+      amount,
+      paymentDate: date,
       paymentMonth,
+      timestamp,
+      
+      // Sender details
+      senderName,
+      senderPhone,
+      accountNumber,
+      matchStrategy,
+      
+      // Allocation breakdown
       allocation: {
         deposit: allocatedToDeposit,
         rent: allocatedToRent,
         utilities: allocatedToUtilities,
         excess: remainingPayment
       },
-      monthlyStatus: monthlyTracking.status,
-      isNewTenant: isNewTenant(tenant.moveInDate),
-      depositIncluded: depositRequired > 0
-    });
-
+      
+      // Monthly tracking
+      monthlyTracking: {
+        expectedTotal,
+        totalPaid: totalMonthlyPaid,
+        remainingAmount: remainingTotal,
+        status: monthlyStatus,
+        breakdown: {
+          deposit: {
+            required: depositRequired,
+            paid: totalDepositPaid,
+            remaining: Math.max(0, depositRequired - totalDepositPaid)
+          },
+          rent: {
+            required: rentAmount,
+            paid: totalRentPaid,
+            remaining: Math.max(0, rentAmount - totalRentPaid)
+          },
+          utilities: {
+            required: utilitiesAmount,
+            paid: totalUtilitiesPaid,
+            remaining: Math.max(0, utilitiesAmount - totalUtilitiesPaid)
+          }
+        }
+      },
+      
+      // Additional metadata
+      isNewTenant: isFirstMonth,
+      depositIncluded: depositRequired > 0,
+      processed: true,
+      createdAt: timestamp
+    };
+    
+    // Use timestamp as document ID for uniqueness and chronological ordering
+    const financialRecordRef = doc(db, 'financial_records', timestamp);
+    await setDoc(financialRecordRef, financialRecord);
+    
+    console.log('✅ Financial record created:', timestamp);
+    
     // ============================================
-    // 8️⃣ UPDATE TENANT DOCUMENT
+    // 5️⃣ UPDATE TENANT SUMMARY (Optional)
     // ============================================
     
-    const paymentLogEntry = {
-      transactionId,
-      amount,
-      date: date,
-      paymentMonth,
-      timestamp: new Date().toISOString(),
-      previousArrears: currentArrears,
-      newArrears: newArrears,
-      senderName: paymentData.senderName,
-      allocation: {
-        deposit: allocatedToDeposit,
-        rent: allocatedToRent,
-        utilities: allocatedToUtilities
-      },
-      monthlyStatus: monthlyTracking.status
-    };
-
+    const currentArrears = tenant.financialSummary?.arrears || tenant.arrears || 0;
+    const newArrears = Math.max(0, currentArrears - amount);
+    const totalPaid = (tenant.financialSummary?.totalPaid || 0) + amount;
+    
+    // Update deposit status if fully paid
+    let updatedDepositStatus = tenant.rentDeposit?.status || 'not_required';
+    let depositPaidDate = tenant.rentDeposit?.paidDate || null;
+    
+    if (depositRequired > 0 && totalDepositPaid >= depositRequired) {
+      updatedDepositStatus = 'paid';
+      depositPaidDate = timestamp;
+    }
+    
     await updateDoc(doc(db, 'tenants', tenant.id), {
       'financialSummary.arrears': newArrears,
       'financialSummary.totalPaid': totalPaid,
-      'financialSummary.balance': balance,
-      'financialSummary.lastUpdated': new Date().toISOString(),
-      'paymentTimeline.lastPaymentDate': new Date().toISOString(),
+      'financialSummary.lastPaymentDate': timestamp,
+      'financialSummary.lastPaymentAmount': amount,
+      'financialSummary.lastUpdated': timestamp,
       'rentDeposit.status': updatedDepositStatus,
       'rentDeposit.paidDate': depositPaidDate,
-      monthlyPaymentTracking: monthlyTracking,
-      updatedAt: new Date().toISOString(),
-      paymentLogs: [
-        ...(tenant.paymentLogs || []),
-        paymentLogEntry
-      ]
+      updatedAt: timestamp
     });
-
-    // ============================================
-    // 9️⃣ UPDATE UNIT DOCUMENT
-    // ============================================
     
-    const isCurrentMonth = paymentMonth === currentMonth;
-    await updateDoc(doc(db, 'units', unitDoc.id), {
-      lastPaymentDate: new Date().toISOString(),
-      lastPaymentAmount: amount,
-      lastPaymentTransactionId: transactionId,
-      currentMonthPaid: isCurrentMonth ? (unit.currentMonthPaid || 0) + amount : unit.currentMonthPaid || 0,
-      currentMonthStatus: isCurrentMonth ? monthlyTracking.status : unit.currentMonthStatus || 'unpaid',
-      updatedAt: new Date().toISOString()
-    });
-
     // ============================================
-    // 🔟 SEND SMS CONFIRMATION
+    // 6️⃣ SEND SMS CONFIRMATION
     // ============================================
     
     try {
-      // Create detailed SMS message
       const smsBreakdown = [];
       if (allocatedToDeposit > 0) {
         smsBreakdown.push(`Deposit: KSh ${allocatedToDeposit.toLocaleString()}`);
@@ -440,39 +400,32 @@ const processRentalPayment = async (paymentData) => {
         smsBreakdown.push(`Utilities: KSh ${allocatedToUtilities.toLocaleString()}`);
       }
       
-      const smsMessage = `Payment received! KSh ${amount.toLocaleString()} allocated:\n${smsBreakdown.join('\n')}\n\nRemaining: KSh ${monthlyTracking.remainingAmount.toLocaleString()}\nStatus: ${monthlyTracking.status.toUpperCase()}\n\nThank you, ${tenant.name}!`;
+      const smsMessage = `Payment received! KSh ${amount.toLocaleString()} allocated:\n${smsBreakdown.join('\n')}\n\nRemaining: KSh ${remainingTotal.toLocaleString()}\nStatus: ${monthlyStatus.toUpperCase()}\n\nThank you, ${tenant.name}!`;
       
       await SMSService.sendSMS(tenant.phone, smsMessage, tenant.id, transactionId);
-      console.log(`📱 SMS confirmation sent to ${tenant.phone}`);
+      console.log(`📱 SMS sent to ${tenant.phone}`);
     } catch (smsError) {
-      console.error('⚠️ Failed to send SMS:', smsError.message);
+      console.error('⚠️ SMS failed:', smsError.message);
     }
-
+    
     // ============================================
-    // ✅ RETURN SUCCESS RESPONSE
+    // ✅ RETURN SUCCESS
     // ============================================
     
-    console.log('✅ Payment processed successfully:');
+    console.log('✅ Payment processed successfully');
     console.log(`   Transaction: ${transactionId}`);
-    console.log(`   Tenant: ${tenant.name} (${tenant.phone})`);
+    console.log(`   Tenant: ${tenant.name}`);
     console.log(`   Month: ${paymentMonth}`);
-    console.log(`   Amount: KSh ${amount}`);
-    console.log(`   Allocation:`);
-    console.log(`     - Deposit: KSh ${allocatedToDeposit}`);
-    console.log(`     - Rent: KSh ${allocatedToRent}`);
-    console.log(`     - Utilities: KSh ${allocatedToUtilities}`);
-    console.log(`   Monthly Status: ${monthlyTracking.status}`);
-    console.log(`   Deposit Status: ${updatedDepositStatus}`);
-    console.log(`   New Arrears: KSh ${newArrears}`);
-
+    console.log(`   Status: ${monthlyStatus}`);
+    
     return {
       success: true,
       data: {
         transactionId,
+        timestamp,
         tenantId: tenant.id,
         tenantName: tenant.name,
         unitCode: tenant.unitCode,
-        propertyId: tenant.propertyId,
         amount,
         paymentMonth,
         allocation: {
@@ -481,72 +434,15 @@ const processRentalPayment = async (paymentData) => {
           utilities: allocatedToUtilities,
           excess: remainingPayment
         },
-        monthlyStatus: monthlyTracking.status,
-        previousArrears: currentArrears,
-        newArrears,
+        monthlyStatus,
+        remainingAmount: remainingTotal,
         depositStatus: updatedDepositStatus,
-        matchStrategy,
-      },
-    };
-  } catch (error) {
-    console.error('❌ Error processing rental payment:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-// Monthly reset function
-const resetMonthlyPaymentTracking = async () => {
-  try {
-    console.log('🔄 Starting monthly payment tracking reset...');
-    const currentMonth = getCurrentMonth();
-    
-    const tenantsQuery = query(
-      collection(db, 'tenants'),
-      where('tenantStatus', '==', 'active')
-    );
-    const tenantsSnapshot = await getDocs(tenantsQuery);
-    
-    let resetCount = 0;
-    
-    for (const tenantDoc of tenantsSnapshot.docs) {
-      const tenant = tenantDoc.data();
-      
-      if (tenant.monthlyPaymentTracking?.month === currentMonth) {
-        continue;
+        matchStrategy
       }
-      
-      const unitsQuery = query(
-        collection(db, 'units'),
-        where('unitId', '==', tenant.unitCode)
-      );
-      const unitsSnapshot = await getDocs(unitsQuery);
-      
-      if (unitsSnapshot.empty) continue;
-      
-      const unitDoc = unitsSnapshot.docs[0];
-      const unit = unitDoc.data();
-      
-      const newMonthTracking = initializeMonthlyPaymentTracking(tenant, unit);
-      
-      await updateDoc(doc(db, 'tenants', tenantDoc.id), {
-        monthlyPaymentTracking: newMonthTracking,
-        updatedAt: new Date().toISOString()
-      });
-      
-      await updateDoc(doc(db, 'units', unitDoc.id), {
-        currentMonthPaid: 0,
-        currentMonthStatus: 'unpaid',
-        updatedAt: new Date().toISOString()
-      });
-      
-      resetCount++;
-    }
-    
-    console.log(`✅ Monthly reset complete: ${resetCount} tenants updated`);
-    return { success: true, resetCount };
+    };
     
   } catch (error) {
-    console.error('❌ Error during monthly reset:', error);
+    console.error('❌ Error processing payment:', error);
     return { success: false, error: error.message };
   }
 };
@@ -554,7 +450,7 @@ const resetMonthlyPaymentTracking = async () => {
 module.exports = { 
   parseMpesaWebhook, 
   processRentalPayment,
-  resetMonthlyPaymentTracking,
   getCurrentMonth,
-  getPaymentMonth
+  getPaymentMonth,
+  normalizePhoneNumber
 };
