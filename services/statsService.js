@@ -140,31 +140,43 @@ class StatsService {
       }
     }
 
-    // === Arrears from tenants who existed by cutoff date ===
-    const tenantsQuery = query(
-      collection(db, 'tenants'),
-      where('createdAt', '<=', cutoffDate)
-    );
-    const tenantsSnap = await getDocs(tenantsQuery);
-    let totalArrears = 0;
-    tenantsSnap.forEach(doc => {
-      totalArrears += parseFloat(doc.data().arrears) || 0;
-    });
+   // In getStats() — replace the arrears section with this:
+const tenantsQuery = query(
+  collection(db, 'tenants'),
+  where('createdAt', '<=', cutoffDate)
+);
+const tenantsSnap = await getDocs(tenantsQuery);
 
-    const stats = {
-      properties: propertiesCount,
-      units: totalUnits,
-      occupied: occupiedUnits,
-      vacant: vacantUnits,
-      revenue: Number(expectedMonthlyRevenue.toFixed(2)),
-      arrears: Number(totalArrears.toFixed(2)),
-      month: monthKey,
-      timestamp: new Date().toISOString(),
-      queryDurationMs: Date.now() - startTime,
-    };
+let totalArrears = 0;
+let totalExpectedRevenue = 0;
+let totalCollected = 0;
 
-    console.log(`[SUCCESS] Stats for ${stats.month}:`, stats);
-    return stats;
+for (const doc of tenantsSnap.docs) {
+  const tenant = doc.data();
+  const tracking = tenant.monthlyPaymentTracking;
+
+  if (tracking && tracking.month === monthKey) {
+    totalExpectedRevenue += tracking.expectedAmount || 0;
+    totalCollected += tracking.paidAmount || 0;
+  }
+
+  totalArrears += tenant.financialSummary?.arrears || 0;
+}
+
+const stats = {
+  properties: propertiesCount,
+  units: totalUnits,
+  occupied: occupiedUnits,
+  vacant: vacantUnits,
+  revenue: Number(totalExpectedRevenue.toFixed(2)),
+  collected: Number(totalCollected.toFixed(2)),
+  arrears: Number(totalArrears.toFixed(2)),
+  month: monthKey,
+  timestamp: new Date().toISOString(),
+  queryDurationMs: Date.now() - startTime,
+};
+
+return stats;
   }
 }
 

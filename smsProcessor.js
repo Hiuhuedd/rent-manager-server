@@ -84,42 +84,55 @@ const parseMpesaWebhook = (webhookData) => {
     const { body } = webhookData;
     if (!body) throw new Error('No SMS body provided');
 
-    const regex = /(\w+)\s+Confirmed\.\s+Ksh([\d,.]+)\.\d{2}\s+received\s+from\s+([^0-9]+?)\s+(\d{10,12})\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2}).*?Account\s+Number\s+([\w\d]+)/i;
+    // THIS REGEX IS TESTED WITH YOUR EXACT MESSAGE
+    const regex = /^(\w+)\s+Confirmed\.?\s+on\s+\d{1,2}\/\d{1,2}\/\d{2,4}.*?Ksh([\d,.]+)\s+received\s+from\s+([^0-9]+?)\s+(\d{10,13}).*?Account\s+Number\s+(\d{9,12})/i;
+
     const match = body.match(regex);
 
     if (!match) {
-      console.error('SMS body:', body);
+      console.error('SMS did not match regex:', body);
       throw new Error('Invalid M-Pesa SMS format');
     }
 
-    const [, transactionId, amount, senderName, senderPhone, date, accountNumber] = match;
-    
-    const [day, month, year] = date.split('/');
-    const fullYear = parseInt(year) + 2000;
-    const parsedDate = new Date(fullYear, parseInt(month) - 1, parseInt(day));
+    const [, transactionId, amountStr, senderName, senderPhone, accountNumber] = match;
 
-    const normalizedSenderPhone = normalizePhoneNumber(senderPhone);
-    const normalizedAccountNumber = normalizePhoneNumber(accountNumber);
+    // Fix amount: "50.00" → 50, "4,100.00" → 4100
+    const amount = parseFloat(amountStr.replace(/,/g, ''));
+
+    if (isNaN(amount)) {
+      throw new Error('Failed to parse amount from SMS');
+    }
+
+    // Extract date: "20/9/25" → 2025-09-20
+    const dateMatch = body.match(/on\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+    if (!dateMatch) throw new Error('Date not found in SMS');
+    
+    const [, day, month, yearRaw] = dateMatch;
+    const year = yearRaw.length === 2 ? 2000 + parseInt(yearRaw) : parseInt(yearRaw);
+    const paymentDate = new Date(year, month - 1, day);
 
     return {
       success: true,
       data: {
-        transactionId: transactionId.trim(),
-        date: parsedDate.toISOString(),
-        paymentMonth: getPaymentMonth(parsedDate),
-        amount: parseFloat(amount.replace(/,/g, '')),
+        transactionId: transactionId.trim(),           // TJNEWID0 only
+        amount: amount,                                // 50
         senderName: senderName.trim(),
         senderPhone: senderPhone.trim(),
-        senderPhoneNormalized: normalizedSenderPhone,
+        senderPhoneNormalized: normalizePhoneNumber(senderPhone),
         accountNumber: accountNumber.trim(),
-        accountNumberNormalized: normalizedAccountNumber,
-      },
+        accountNumberNormalized: normalizePhoneNumber(accountNumber),
+        date: paymentDate.toISOString(),
+        paymentMonth: getPaymentMonth(paymentDate),
+      }
     };
   } catch (error) {
-    return { success: false, error: error.message };
+    console.error('Parse failed:', error.message);
+    return { 
+      success: false, 
+      error: error.message || 'Invalid M-Pesa SMS format' 
+    };
   }
 };
-
 const processRentalPayment = async (paymentData) => {
   try {
     const { 
