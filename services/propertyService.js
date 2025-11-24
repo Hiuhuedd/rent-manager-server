@@ -2,7 +2,15 @@
 // FILE: src/services/propertyService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { collection, getDocs, getDoc, doc, writeBatch, setDoc } = require('firebase/firestore');
+const {
+  collection,
+  getDocs,
+  getDoc,
+  doc,
+  writeBatch,
+  setDoc,
+  serverTimestamp, // ← Important: for accurate createdAt
+} = require('firebase/firestore');
 
 class PropertyService {
   async getAllProperties() {
@@ -61,6 +69,9 @@ class PropertyService {
     };
   }
 
+  /**
+   * Create a new property + units with proper createdAt timestamps
+   */
   async createProperty({ propertyName, units }) {
     const start = Date.now();
     const batch = writeBatch(db);
@@ -69,6 +80,8 @@ class PropertyService {
     const propertyUnitIds = [];
 
     let totalRevenue = 0;
+
+    const now = serverTimestamp(); // ← Firestore server time (accurate & secure)
 
     units.forEach((unit) => {
       const unitId = unit.unitId;
@@ -91,6 +104,7 @@ class PropertyService {
         rentAmount: rent,
         depositAmount: deposit,
         utilityFees: { garbageFee: garbage, waterBill: water },
+        createdAt: now, // ← Added
       };
 
       batch.set(unitRef, unitData);
@@ -103,13 +117,17 @@ class PropertyService {
       propertyRevenueTotal: totalRevenue,
       propertyUnitIds,
       propertyVacantUnits: units.length,
+      createdAt: now, // ← Critical for historical stats
     };
 
     batch.set(propertyRef, propertyData);
     await batch.commit();
 
+    console.log(`[SUCCESS] Property created: ${propertyName} | ${units.length} units | ID: ${propertyId}`);
+
     return {
       propertyId,
+      propertyName,
       totalRevenue,
       durationMs: Date.now() - start,
     };
@@ -160,7 +178,7 @@ class PropertyService {
         propertyRevenueTotal: totalRevenue,
         propertyVacantUnits: vacantCount,
         propertyOccupiedUnits: units.length - vacantCount,
-        updatedAt: new Date(),
+        updatedAt: serverTimestamp(),
       },
       { merge: true }
     );
