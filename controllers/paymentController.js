@@ -5,117 +5,162 @@ const paymentService = require('../services/paymentService');
 const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 
 class PaymentController {
-  // ← Keep this as a normal method (it's fine)
-  validateMonth = (month) => {
-    if (!month) return true;
-    return /^\d{4}-\d{2}$/.test(month);
-  };
-
-  // ← ALL controller methods must be arrow functions!
-  getPaymentStatus = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Get payment status for all units in a specific month
+   * GET /api/payments/status?month=2024-11
+   */
+  async getPaymentStatus(req, res) {
+    const { month } = req.query;
+    
+    console.log(`📊 Request: Get payment status for ${month || 'current month'}`);
+    
+    const status = await paymentService.getPaymentStatus(month);
+    
+    res.status(200).json({
+      success: true,
+      data: status,
+      metadata: {
+        month: month || new Date().toISOString().slice(0, 7),
+        totalUnits: status.length,
+        paidUnits: status.filter(s => s.status === 'Paid').length,
+        unpaidUnits: status.filter(s => s.status === 'Unpaid').length,
+        vacantUnits: status.filter(s => s.status === 'Vacant').length
       }
-      const status = await paymentService.getPaymentStatus(month);
-      res.json(createSuccessResponse(status));
-    } catch (error) {
-      console.error('[ERROR] Failed to get payment status:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch payment status', error.message));
-    }
-  };
+    });
+  }
 
-  getPaymentVolume = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Get payment volume by property for a specific month
+   * GET /api/payments/volume?month=2024-11
+   */
+  async getPaymentVolume(req, res) {
+    const { month } = req.query;
+    
+    console.log(`📊 Request: Get payment volume for ${month || 'current month'}`);
+    
+    const volume = await paymentService.getPaymentVolume(month);
+    
+    const totalVolume = volume.reduce((sum, v) => sum + v.total, 0);
+    const totalPayments = volume.reduce((sum, v) => sum + (v.paymentCount || 0), 0);
+    
+    res.status(200).json({
+      success: true,
+      data: volume,
+      metadata: {
+        month: month || new Date().toISOString().slice(0, 7),
+        totalProperties: volume.length,
+        totalVolume,
+        totalPayments,
+        averagePerProperty: volume.length > 0 ? (totalVolume / volume.length).toFixed(2) : 0
       }
-      const volume = await paymentService.getPaymentVolume(month);
-      res.json(createSuccessResponse(volume));
-    } catch (error) {
-      console.error('[ERROR] Failed to get payment volume:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch payment volume', error.message));
-    }
-  };
+    });
+  }
 
-  getMonthlyReport = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Get comprehensive monthly report
+   * GET /api/payments/monthly-report?month=2024-11
+   */
+  async getMonthlyReport(req, res) {
+    const { month } = req.query;
+    
+    console.log(`📊 Request: Generate monthly report for ${month || 'current month'}`);
+    
+    const report = await paymentService.getMonthlyReport(month);
+    
+    // Add collection rate
+    const collectionRate = report.summary.totalExpected > 0 
+      ? ((report.summary.totalReceived / report.summary.totalExpected) * 100).toFixed(2)
+      : 0;
+    
+    res.status(200).json({
+      success: true,
+      data: report,
+      metadata: {
+        collectionRate: `${collectionRate}%`,
+        generatedAt: new Date().toISOString()
       }
-      console.log(`[CONTROLLER] Getting monthly report for: ${month || 'current month'}`);
-      const report = await paymentService.getMonthlyReport(month);
-      res.json(createSuccessResponse(report));
-    } catch (error) {
-      console.error('[ERROR] Failed to get monthly report:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch monthly report', error.message));
-    }
-  };
+    });
+  }
 
-  getOverduePayments = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Get overdue payments for a specific month
+   * GET /api/payments/overdue?month=2024-11
+   */
+  async getOverduePayments(req, res) {
+    const { month } = req.query;
+    
+    console.log(`📊 Request: Get overdue payments for ${month || 'current month'}`);
+    
+    const overdueData = await paymentService.getOverduePayments(month);
+    
+    const totalOverdue = overdueData.tenants.reduce((sum, t) => sum + t.remainingAmount, 0);
+    const totalArrears = overdueData.tenants.reduce((sum, t) => sum + t.arrears, 0);
+    
+    res.status(200).json({
+      success: true,
+      data: overdueData,
+      metadata: {
+        totalOverdueAmount: totalOverdue,
+        totalArrearsAmount: totalArrears,
+        partialPayments: overdueData.tenants.filter(t => t.status === 'partial').length,
+        completelyUnpaid: overdueData.tenants.filter(t => t.status === 'unpaid').length
       }
-      const overdue = await paymentService.getOverduePayments(month);
-      res.json(createSuccessResponse(overdue));
-    } catch (error) {
-      console.error('[ERROR] Failed to get overdue payments:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch overdue payments', error.message));
-    }
-  };
+    });
+  }
 
-  getArrears = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Send payment reminders to tenants with overdue payments
+   * POST /api/payments/send-reminders
+   * Body: { month: '2024-11' }
+   */
+  async sendReminders(req, res) {
+    const { month } = req.body;
+    
+    console.log(`📱 Request: Send reminders for ${month || 'current month'}`);
+    
+    const result = await paymentService.sendReminders(month);
+    
+    res.status(200).json({
+      success: true,
+      data: result,
+      metadata: {
+        successRate: result.sent > 0 
+          ? `${((result.sent / (result.sent + result.failed)) * 100).toFixed(2)}%`
+          : '0%',
+        timestamp: new Date().toISOString()
       }
-      const arrears = await paymentService.getArrears(month);
-      res.json(createSuccessResponse(arrears));
-    } catch (error) {
-      console.error('[ERROR] Failed to get arrears:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch arrears', error.message));
-    }
-  };
+    });
+  }
 
-  sendReminders = async (req, res) => {
-    try {
-      const month = req.query.month || null;
-      if (!this.validateMonth(month)) {
-        return res.status(400).json(createErrorResponse('Invalid month format. Expected YYYY-MM'));
+  /**
+   * Get arrears summary
+   * GET /api/payments/arrears?month=2024-11
+   */
+  async getArrears(req, res) {
+    const { month } = req.query;
+    
+    console.log(`📊 Request: Get arrears for ${month || 'current month'}`);
+    
+    const arrearsData = await paymentService.getArrears(month);
+    
+    const totalArrears = arrearsData.arrears
+      .filter(a => a.amount)
+      .reduce((sum, a) => sum + a.amount, 0);
+    
+    const tenantsWithArrears = arrearsData.arrears.filter(a => a.tenant).length;
+    
+    res.status(200).json({
+      success: true,
+      data: arrearsData,
+      metadata: {
+        totalArrears,
+        tenantsWithArrears,
+        averageArrears: tenantsWithArrears > 0 
+          ? (totalArrears / tenantsWithArrears).toFixed(2)
+          : 0
       }
-      const result = await paymentService.sendReminders(month);
-      res.json(createSuccessResponse(result));
-    } catch (error) {
-      console.error('[ERROR] Failed to send reminders:', error);
-      res.status(500).json(createErrorResponse('Failed to send reminders', error.message));
-    }
-  };
-
-  getPaymentHistory = async (req, res) => {
-    try {
-      const months = parseInt(req.query.months) || 6;
-      const currentDate = new Date();
-      const history = [];
-
-      for (let i = 0; i < months; i++) {
-        const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
-        const report = await paymentService.getMonthlyReport(monthStr);
-        history.push(report);
-      }
-
-      res.json(createSuccessResponse({ history }));
-    } catch (error) {
-      console.error('[ERROR] Failed to get payment history:', error);
-      res.status(500).json(createErrorResponse('Failed to fetch payment history', error.message));
-    }
-  };
+    });
+  }
 }
 
 module.exports = new PaymentController();
