@@ -9,7 +9,7 @@ const {
 } = require('firebase/firestore');
 const { getCurrentMonth, isMovedInThisMonth } = require('../utils/dateHelper');
 const { PAYMENT_STATUS, TENANT_STATUS, DEPOSIT_STATUS } = require('../config/constants');
-const smsService = require('./smsService');
+const smsService = require('../smsService');
 
 class TenantService {
   async getAllTenants() {
