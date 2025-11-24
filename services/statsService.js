@@ -2,7 +2,7 @@
 // FILE: src/services/statsService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { collection, getDocs } = require('firebase/firestore');
+const { collection, getDocs,doc } = require('firebase/firestore');
 const { isMovedInThisMonth } = require('../utils/dateHelper');
 
 class StatsService {
