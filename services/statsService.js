@@ -2,110 +2,128 @@
 // FILE: src/services/statsService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { collection, getDocs, doc, getDoc } = require('firebase/firestore');
+const {
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+  query,
+  where,
+  serverTimestamp,
+} = require('firebase/firestore');
 
 /**
- * Safely converts any Firestore date field to a JavaScript Date
- * Supports: Firestore Timestamp, JS Date, ISO string, or null/undefined
+ * Safe conversion: any date field → JS Date
  */
 const toJsDate = (field) => {
   if (!field) return null;
-
-  // Firestore Timestamp
-  if (typeof field.toDate === 'function') {
-    return field.toDate();
-  }
-
-  // Already a valid Date
-  if (field instanceof Date && !isNaN(field)) {
-    return field;
-  }
-
-  // String date (e.g., "2025-04-15" or ISO)
+  if (typeof field.toDate === 'function') return field.toDate();
+  if (field instanceof Date && !isNaN(field)) return field;
   if (typeof field === 'string') {
-    const parsed = new Date(field);
-    return isNaN(parsed.getTime()) ? null : parsed;
+    const d = new Date(field);
+    return isNaN(d.getTime()) ? null : d;
   }
-
   return null;
 };
 
 class StatsService {
-  /**
-   * Get portfolio stats for a specific month (YYYY-MM)
-   * If no month is provided → uses current month
-   */
   async getStats(month = null) {
     const startTime = Date.now();
-    console.log(`[STATS] Fetching stats for month: ${month || 'current'}`);
-
-    // === Resolve target month ===
     const now = new Date();
-    const [targetYear, targetMonth] = month
-      ? month.split('-').map(Number)
-      : [now.getFullYear(), now.getMonth() + 1];
 
-    const year = targetYear;
-    const monthIndex = targetMonth - 1; // JS months are 0-indexed
+    // === Properly resolve target month (this was the bug!) ===
+    let targetYear, targetMonthIndex;
 
-    const monthStart = new Date(year, monthIndex, 1);        // e.g., 2025-10-01
-    const monthEnd = new Date(year, monthIndex + 1, 1);      // 2025-11-01
+    if (month && typeof month === 'string' && month.includes('-')) {
+      const parts = month.split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonthIndex = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
+    } else {
+      // Default: current month
+      targetYear = now.getFullYear();
+      targetMonthIndex = now.getMonth();
+    }
 
-    console.log(`[STATS] Period: ${monthStart.toISOString().slice(0,10)} → ${monthEnd.toISOString().slice(0,10)}`);
+    const monthStart = new Date(targetYear, targetMonthIndex, 1);
+    const monthEnd = new Date(targetYear, targetMonthIndex + 1, 1);
+    const cutoffDate = monthEnd; // Anything created AFTER this didn't exist yet
 
+    const monthKey = `${targetYear}-${String(targetMonthIndex + 1).padStart(2, '0')}`;
+    console.log(`[STATS] Fetching stats for: ${monthKey} | Cutoff: ${cutoffDate.toISOString().slice(0, 10)}`);
+
+    let propertiesCount = 0;
     let totalUnits = 0;
     let occupiedUnits = 0;
     let vacantUnits = 0;
     let expectedMonthlyRevenue = 0;
 
-    // === Fetch all properties ===
-    const propertiesSnap = await getDocs(collection(db, 'properties'));
-    const propertiesCount = propertiesSnap.size;
+    // === 1. Properties that existed by cutoff date ===
+    const propertiesQuery = query(
+      collection(db, 'properties'),
+      where('createdAt', '<=', cutoffDate)
+    );
+    const propertiesSnap = await getDocs(propertiesQuery);
+    propertiesCount = propertiesSnap.size;
 
-    for (const [idx, propDoc] of propertiesSnap.docs.entries()) {
+    if (propertiesCount === 0) {
+      return {
+        properties: 0,
+        units: 0,
+        occupied: 0,
+        vacant: 0,
+        revenue: 0,
+        arrears: 0,
+        month: monthKey,
+        timestamp: new Date().toISOString(),
+        queryDurationMs: Date.now() - startTime,
+      };
+    }
+
+    // === 2. Process each historical property ===
+    for (const propDoc of propertiesSnap.docs) {
       const propData = propDoc.data();
       const unitIds = propData.propertyUnitIds || [];
 
       if (unitIds.length === 0) continue;
 
-      // === Fetch all units for this property ===
       const unitRefs = unitIds.map(id => doc(db, 'units', id));
       const unitSnaps = await Promise.all(unitRefs.map(ref => getDoc(ref)));
-      const validUnits = unitSnaps.filter(snap => snap.exists());
 
-      totalUnits += validUnits.length;
+      // Only units that existed by cutoffDate
+      const historicalUnits = unitSnaps.filter(snap => {
+        if (!snap.exists()) return false;
+        const createdAt = toJsDate(snap.data().createdAt);
+        return createdAt && createdAt <= cutoffDate;
+      });
 
-      // === Collect tenant IDs for occupied units ===
-      const tenantIdsToFetch = validUnits
-        .filter(snap => !snap.data().isVacant && snap.data().tenantId)
+      totalUnits += historicalUnits.length;
+
+      // === Fetch tenants for occupied units ===
+      const tenantIds = historicalUnits
         .map(snap => snap.data().tenantId)
         .filter(Boolean);
 
-      // === Batch fetch tenants ===
-      const tenantRefs = tenantIdsToFetch.map(id => doc(db, 'tenants', id));
-      const tenantSnaps = await Promise.all(tenantRefs.map(ref => getDoc(ref)));
-
-      const tenantsMap = new Map();
-      tenantSnaps.forEach(snap => {
-        if (snap.exists()) {
-          tenantsMap.set(snap.id, snap.data());
-        }
-      });
+      const tenantMap = new Map();
+      if (tenantIds.length > 0) {
+        const tenantRefs = tenantIds.map(id => doc(db, 'tenants', id));
+        const tenantSnaps = await Promise.all(tenantRefs.map(ref => getDoc(ref)));
+        tenantSnaps.forEach(snap => {
+          if (snap.exists()) tenantMap.set(snap.id, snap.data());
+        });
+      }
 
       // === Process each unit ===
-      for (const unitSnap of validUnits) {
+      for (const unitSnap of historicalUnits) {
         const unitData = unitSnap.data();
-        const tenantId = unitData.tenantId;
-        const tenantData = tenantsMap.get(tenantId);
+        const tenantData = tenantMap.get(unitData.tenantId);
 
         const moveInDate = toJsDate(tenantData?.moveInDate);
         const moveOutDate = toJsDate(tenantData?.moveOutDate);
 
-        // Was this unit occupied at any point during the target month?
         const wasOccupiedInMonth =
-          tenantId &&
-          (!moveOutDate || moveOutDate >= monthStart) &&   // hasn't moved out before month start
-          (!moveInDate || moveInDate < monthEnd);         // moved in before month ends
+          unitData.tenantId &&
+          (!moveOutDate || moveOutDate >= monthStart) &&
+          (!moveInDate || moveInDate < monthEnd);
 
         const rent = parseFloat(unitData.rentAmount) || 0;
         const garbage = parseFloat(unitData.utilityFees?.garbageFee) || 0;
@@ -114,29 +132,25 @@ class StatsService {
 
         if (wasOccupiedInMonth) {
           occupiedUnits++;
-
-          // Deposit only counts if tenant moved in during this month
           const movedInThisMonth = moveInDate && moveInDate >= monthStart && moveInDate < monthEnd;
-          const monthlyTotal = rent + garbage + water + (movedInThisMonth ? deposit : 0);
-
-          expectedMonthlyRevenue += monthlyTotal;
-
-          console.log(`   [UNIT] Occupied → +${monthlyTotal} (${movedInThisMonth ? '+deposit' : 'no deposit'})`);
+          expectedMonthlyRevenue += rent + garbage + water + (movedInThisMonth ? deposit : 0);
         } else {
           vacantUnits++;
-          console.log(`   [UNIT] Vacant in ${month || 'current month'}`);
         }
       }
     }
 
-    // === Total arrears (still global, not monthly) ===
-    const tenantsSnap = await getDocs(collection(db, 'tenants'));
+    // === Arrears from tenants who existed by cutoff date ===
+    const tenantsQuery = query(
+      collection(db, 'tenants'),
+      where('createdAt', '<=', cutoffDate)
+    );
+    const tenantsSnap = await getDocs(tenantsQuery);
     let totalArrears = 0;
     tenantsSnap.forEach(doc => {
       totalArrears += parseFloat(doc.data().arrears) || 0;
     });
 
-    // === Final stats object ===
     const stats = {
       properties: propertiesCount,
       units: totalUnits,
@@ -144,12 +158,12 @@ class StatsService {
       vacant: vacantUnits,
       revenue: Number(expectedMonthlyRevenue.toFixed(2)),
       arrears: Number(totalArrears.toFixed(2)),
-      month: month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      month: monthKey,
       timestamp: new Date().toISOString(),
       queryDurationMs: Date.now() - startTime,
     };
 
-    console.log(`[SUCCESS] Stats ready for ${stats.month} | Revenue: ${stats.revenue} | Duration: ${stats.queryDurationMs}ms`);
+    console.log(`[SUCCESS] Stats for ${stats.month}:`, stats);
     return stats;
   }
 }
