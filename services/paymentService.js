@@ -11,6 +11,43 @@ class PaymentService {
   /**
    * Check if a record existed in the specified month
    */
+  isRecordActiveInMonth(record, targetMonth) {
+    const [year, month] = targetMonth.split('-').map(Number);
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+
+    // Check creation date
+    const createdAt = record.createdAt ? new Date(record.createdAt) : null;
+    if (createdAt && createdAt > monthEnd) {
+      return false; // Created after target month
+    }
+
+    // Check deletion/deactivation date
+    const deletedAt = record.deletedAt || record.deactivatedAt || record.vacatedDate;
+    if (deletedAt) {
+      const deletionDate = new Date(deletedAt);
+      if (deletionDate < monthStart) {
+        return false; // Deleted before target month
+      }
+    }
+
+    // For tenants, check move-in and move-out dates
+    if (record.moveInDate) {
+      const moveInDate = new Date(record.moveInDate);
+      if (moveInDate > monthEnd) {
+        return false; // Moved in after target month
+      }
+    }
+
+    if (record.moveOutDate) {
+      const moveOutDate = new Date(record.moveOutDate);
+      if (moveOutDate < monthStart) {
+        return false; // Moved out before target month
+      }
+    }
+
+    return true;
+  }
 
   /**
    * Check if tenant should be charged deposit in the target month
@@ -111,7 +148,261 @@ class PaymentService {
     return volume;
   }
 
+  async getMonthlyReport(month) {
+    const targetMonth = month || getCurrentMonth();
+    console.log(`📊 Generating monthly report for: ${targetMonth}`);
+    
+    const [year, monthNum] = targetMonth.split('-').map(Number);
+    const monthStart = new Date(year, monthNum - 1, 1);
+    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
 
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    const unitsSnapshot = await getDocs(collection(db, 'units'));
+    const propertiesSnapshot = await getDocs(collection(db, 'properties'));
+
+    const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const allUnits = unitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Filter records that existed in target month
+    const activeTenants = allTenants.filter(tenant => 
+      this.isRecordActiveInMonth(tenant, targetMonth)
+    );
+    
+    const activeUnits = allUnits.filter(unit => 
+      this.isRecordActiveInMonth(unit, targetMonth)
+    );
+
+    const activeProperties = allProperties.filter(property => 
+      this.isRecordActiveInMonth(property, targetMonth)
+    );
+
+    console.log(`✅ Active records - Tenants: ${activeTenants.length}, Units: ${activeUnits.length}, Properties: ${activeProperties.length}`);
+
+    const report = {
+      month: targetMonth,
+      summary: {
+        totalTenants: 0,
+        paidInFull: 0,
+        partialPayment: 0,
+        unpaid: 0,
+        totalExpected: 0,
+        totalReceived: 0,
+        totalRemaining: 0
+      },
+      tenants: []
+    };
+    
+    const unitsMap = new Map();
+    activeUnits.forEach(unit => {
+      unitsMap.set(unit.unitId || unit.code, unit);
+    });
+
+    const propertiesMap = new Map();
+    activeProperties.forEach(property => {
+      propertiesMap.set(property.id, property);
+    });
+    
+    for (const tenant of activeTenants) {
+      let tracking = tenant.monthlyPaymentTracking || null;
+      
+      // Verify tracking is for the correct month, otherwise recalculate
+      if (!tracking || tracking.month !== targetMonth) {
+        const unit = unitsMap.get(tenant.unitCode);
+        if (!unit) {
+          console.warn(`⚠️ Unit ${tenant.unitCode} not found for tenant ${tenant.name}`);
+          continue;
+        }
+
+        const rent = parseFloat(unit.rentAmount) || 0;
+        const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+        const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+        const deposit = parseFloat(unit.depositAmount) || 0;
+        
+        const includeDeposit = this.shouldIncludeDepositForMonth(tenant, unit, targetMonth);
+        
+        const monthlyRent = rent + garbage + water;
+        const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+        
+        tracking = {
+          month: targetMonth,
+          expectedAmount: totalExpected,
+          paidAmount: 0,
+          remainingAmount: totalExpected,
+          status: PAYMENT_STATUS.UNPAID,
+          payments: [],
+          breakdown: {
+            deposit: includeDeposit ? deposit : 0,
+            rent: rent,
+            utilities: garbage + water
+          }
+        };
+      }
+      
+      if (tracking && tracking.month === targetMonth) {
+        report.summary.totalTenants++;
+        report.summary.totalExpected += tracking.expectedAmount || 0;
+        report.summary.totalReceived += tracking.paidAmount || 0;
+        report.summary.totalRemaining += tracking.remainingAmount || 0;
+        
+        switch (tracking.status) {
+          case PAYMENT_STATUS.PAID:
+            report.summary.paidInFull++;
+            break;
+          case PAYMENT_STATUS.PARTIAL:
+            report.summary.partialPayment++;
+            break;
+          case PAYMENT_STATUS.UNPAID:
+            report.summary.unpaid++;
+            break;
+        }
+
+        const property = propertiesMap.get(tenant.propertyId);
+        
+        report.tenants.push({
+          tenantId: tenant.id,
+          name: tenant.name,
+          unitCode: tenant.unitCode,
+          propertyName: property?.name || tenant.propertyDetails?.propertyName || 'N/A',
+          status: tracking.status || PAYMENT_STATUS.UNPAID,
+          expected: tracking.expectedAmount || 0,
+          paid: tracking.paidAmount || 0,
+          remaining: tracking.remainingAmount || 0,
+          breakdown: tracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
+          payments: tracking.payments || [],
+          moveInDate: tenant.moveInDate,
+          moveOutDate: tenant.moveOutDate
+        });
+      }
+    }
+    
+    console.log(`✅ Report generated: ${report.summary.totalTenants} active tenants for ${targetMonth}`);
+    return report;
+  }
+
+  async getOverduePayments(month) {
+    const targetMonth = month || getCurrentMonth();
+    console.log(`📊 Getting overdue payments for: ${targetMonth}`);
+
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    const unitsSnapshot = await getDocs(collection(db, 'units'));
+    
+    const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const allUnits = unitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Filter tenants active in target month
+    const activeTenants = allTenants.filter(tenant => 
+      this.isRecordActiveInMonth(tenant, targetMonth)
+    );
+
+    const activeUnits = allUnits.filter(unit => 
+      this.isRecordActiveInMonth(unit, targetMonth)
+    );
+    
+    const unitsMap = new Map();
+    activeUnits.forEach(unit => {
+      unitsMap.set(unit.unitId || unit.code, unit);
+    });
+    
+    const overdueList = [];
+    
+    for (const tenant of activeTenants) {
+      let tracking = tenant.monthlyPaymentTracking || null;
+      
+      if (!tracking || tracking.month !== targetMonth) {
+        const unit = unitsMap.get(tenant.unitCode);
+        if (!unit) continue;
+
+        const rent = parseFloat(unit.rentAmount) || 0;
+        const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+        const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+        const deposit = parseFloat(unit.depositAmount) || 0;
+        
+        const includeDeposit = this.shouldIncludeDepositForMonth(tenant, unit, targetMonth);
+        
+        const monthlyRent = rent + garbage + water;
+        const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
+        
+        tracking = {
+          month: targetMonth,
+          expectedAmount: totalExpected,
+          paidAmount: 0,
+          remainingAmount: totalExpected,
+          status: PAYMENT_STATUS.UNPAID,
+          payments: [],
+          breakdown: { deposit: includeDeposit ? deposit : 0, rent: rent, utilities: garbage + water }
+        };
+      }
+      
+      if (tracking && tracking.month === targetMonth && tracking.status !== PAYMENT_STATUS.PAID) {
+        overdueList.push({
+          tenantId: tenant.id,
+          name: tenant.name,
+          phone: tenant.phone,
+          unitCode: tenant.unitCode,
+          propertyName: tenant.propertyDetails?.propertyName || 'N/A',
+          expectedAmount: tracking.expectedAmount || 0,
+          paidAmount: tracking.paidAmount || 0,
+          remainingAmount: tracking.remainingAmount || 0,
+          status: tracking.status || PAYMENT_STATUS.UNPAID,
+          arrears: tenant.financialSummary?.arrears || tenant.arrears || 0,
+          moveInDate: tenant.moveInDate,
+          moveOutDate: tenant.moveOutDate
+        });
+      }
+    }
+    
+    console.log(`📋 Found ${overdueList.length} tenants with incomplete payments for ${targetMonth}`);
+    return {
+      month: targetMonth,
+      count: overdueList.length,
+      tenants: overdueList
+    };
+  }
+
+  async getArrears(month) {
+    const targetMonth = month || getCurrentMonth();
+    console.log(`📊 Getting arrears for: ${targetMonth}`);
+
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    const propertiesSnapshot = await getDocs(collection(db, 'properties'));
+
+    const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Filter records active in target month
+    const activeTenants = allTenants.filter(tenant => 
+      this.isRecordActiveInMonth(tenant, targetMonth)
+    );
+
+    const activeProperties = allProperties.filter(property => 
+      this.isRecordActiveInMonth(property, targetMonth)
+    );
+
+    const arrears = activeTenants
+      .filter(t => (t.arrears || 0) > 0)
+      .map(t => ({
+        tenant: t.name,
+        unitCode: t.unitCode,
+        amount: t.arrears,
+        propertyId: t.propertyId,
+      }));
+
+    const totalByProperty = {};
+    activeProperties.forEach(p => {
+      totalByProperty[p.id] = {
+        property: p.name,
+        totalArrears: arrears
+          .filter(a => a.propertyId === p.id)
+          .reduce((sum, a) => sum + a.amount, 0),
+      };
+    });
+
+    return {
+      month: targetMonth,
+      arrears: [...arrears, ...Object.values(totalByProperty)]
+    };
+  }
 
   async sendReminders(month) {
     const targetMonth = month || getCurrentMonth();
@@ -185,132 +476,6 @@ class PaymentService {
       }
     };
   }
-
-
-
-  isRecordActiveInMonth(record, targetMonth) {
-    const [year, month] = targetMonth.split('-').map(Number);
-    const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
-
-    const createdAt = record.createdAt ? new Date(record.createdAt) : null;
-    if (createdAt && createdAt > monthEnd) return false;
-
-    const deletedAt = record.deletedAt || record.vacatedDate;
-    if (deletedAt && new Date(deletedAt) < monthStart) return false;
-
-    if (record.moveInDate && new Date(record.moveInDate) > monthEnd) return false;
-    if (record.moveOutDate && new Date(record.moveOutDate) < monthStart) return false;
-
-    return true;
-  }
-
-  async getMonthlyReport(month) {
-    const targetMonth = month || getCurrentMonth();
-    console.log(`Generating monthly report for: ${targetMonth}`);
-
-    const tenantsSnap = await getDocs(collection(db, 'tenants'));
-    const unitsSnap = await getDocs(collection(db, 'units'));
-    const propertiesSnap = await getDocs(collection(db, 'properties'));
-
-    const tenants = tenantsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const units = unitsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const properties = propertiesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    const activeTenants = tenants.filter(t => this.isRecordActiveInMonth(t, targetMonth));
-    const unitsMap = new Map(units.map(u => [u.unitId || u.code, u]));
-    const propertiesMap = new Map(properties.map(p => [p.id, p]));
-
-    const report = {
-      month: targetMonth,
-      summary: {
-        totalTenants: 0,
-        paidInFull: 0,
-        partialPayment: 0,
-        unpaid: 0,
-        totalExpected: 0,
-        totalReceived: 0,
-        totalRemaining: 0,
-        totalArrears: 0
-      },
-      tenants: []
-    };
-
-    for (const tenant of activeTenants) {
-      const unit = unitsMap.get(tenant.unitCode);
-      if (!unit) continue;
-
-      let tracking = tenant.monthlyPaymentTracking;
-      if (!tracking || tracking.month !== targetMonth) continue; // Only show if tracking exists
-
-      report.summary.totalTenants++;
-      report.summary.totalExpected += tracking.expectedAmount || 0;
-      report.summary.totalReceived += tracking.paidAmount || 0;
-      report.summary.totalRemaining += tracking.remainingAmount || 0;
-      report.summary.totalArrears += tenant.financialSummary?.arrears || 0;
-
-      if (tracking.status === PAYMENT_STATUS.PAID) report.summary.paidInFull++;
-      else if (tracking.status === PAYMENT_STATUS.PARTIAL) report.summary.partialPayment++;
-      else report.summary.unpaid++;
-
-      const property = propertiesMap.get(tenant.propertyId);
-
-      report.tenants.push({
-        tenantId: tenant.id,
-        name: tenant.name,
-        phone: tenant.phone,
-        unitCode: tenant.unitCode,
-        propertyName: property?.propertyName || 'Unknown',
-        status: tracking.status,
-        expected: tracking.expectedAmount || 0,
-        paid: tracking.paidAmount || 0,
-        remaining: tracking.remainingAmount || 0,
-        arrears: tenant.financialSummary?.arrears || 0,
-        breakdown: tracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
-        payments: tracking.payments || []
-      });
-    }
-
-    return report;
-  }
-
-  async getOverduePayments(month) {
-    const targetMonth = month || getCurrentMonth();
-    const report = await this.getMonthlyReport(targetMonth);
-    const overdue = report.tenants.filter(t => t.status !== 'paid');
-
-    return {
-      month: targetMonth,
-      count: overdue.length,
-      totalRemaining: report.summary.totalRemaining,
-      tenants: overdue
-    };
-  }
-
-  async getArrears(month) {
-    const targetMonth = month || getCurrentMonth();
-    const tenantsSnap = await getDocs(collection(db, 'tenants'));
-    const tenants = tenantsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    const activeTenants = tenants.filter(t => this.isRecordActiveInMonth(t, targetMonth));
-    const totalArrears = activeTenants.reduce((sum, t) => sum + (t.financialSummary?.arrears || 0), 0);
-
-    return {
-      month: targetMonth,
-      totalArrears,
-      tenants: activeTenants
-        .filter(t => (t.financialSummary?.arrears || 0) > 0)
-        .map(t => ({
-          name: t.name,
-          phone: t.phone,
-          unitCode: t.unitCode,
-          arrears: t.financialSummary?.arrears || 0
-        }))
-    };
-  }
-
-
-
 }
 
 module.exports = new PaymentService();
