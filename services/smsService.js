@@ -2,7 +2,6 @@
 // ============================================
 // FILE: src/services/smsService.js
 // ============================================
-const SMSService = require('../../smsService');
 
 // Re-export the SMS service methods
 module.exports = {

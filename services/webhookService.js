@@ -4,7 +4,7 @@
 // ============================================
 const { db } = require('../config/firebase');
 const { doc, getDoc, setDoc } = require('firebase/firestore');
-const smsProcessor = require('../../smsProcessor');
+const smsProcessor = require('../smsProcessor');
 
 class WebhookService {
   async processMpesaWebhook(webhookData) {
