@@ -3,9 +3,9 @@
 // FILE: src/services/tenantService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { 
-  collection, getDocs, getDoc, doc, query, where, 
-  addDoc, updateDoc, deleteDoc, setDoc 
+const {
+  collection, getDocs, getDoc, doc, query, where,
+  addDoc, updateDoc, deleteDoc, setDoc
 } = require('firebase/firestore');
 const { getCurrentMonth, isMovedInThisMonth } = require('../utils/dateHelper');
 const { PAYMENT_STATUS, TENANT_STATUS, DEPOSIT_STATUS } = require('../config/constants');
@@ -13,12 +13,42 @@ const smsService = require('../smsService');
 
 class TenantService {
   async getAllTenants() {
-    const snapshot = await getDocs(collection(db, 'tenants'));
-    return snapshot.docs.map(doc => {
+    const currentMonth = getCurrentMonth();
+
+    // Fetch tenants and financial records in parallel
+    const [tenantsSnapshot, paymentsSnapshot] = await Promise.all([
+      getDocs(collection(db, 'tenants')),
+      getDocs(query(
+        collection(db, 'financial_records'),
+        where('paymentMonth', '==', currentMonth)
+      ))
+    ]);
+
+    // Aggregate payments by tenant
+    const paymentsByTenant = {};
+    paymentsSnapshot.docs.forEach(doc => {
       const data = doc.data();
+      if (data.tenantId) {
+        paymentsByTenant[data.tenantId] = (paymentsByTenant[data.tenantId] || 0) + (data.amount || 0);
+      }
+    });
+
+    return tenantsSnapshot.docs.map(doc => {
+      const data = doc.data();
+      const paidThisMonth = paymentsByTenant[doc.id] || 0;
+
+      // Calculate effective arrears by subtracting this month's payments
+      // We assume data.arrears tracks the total debt including current month's expectations
+      // or that we want to show the net pending amount.
+      const currentArrears = (data.arrears || 0);
+      const effectiveArrears = currentArrears - paidThisMonth;
+
       return {
         id: doc.id,
         ...data,
+        arrears: effectiveArrears, // Override arrears with calculated value
+        originalArrears: data.arrears, // Keep original for reference if needed
+        paidThisMonth,
         rentDeposit: data.rentDeposit || {
           amount: 0,
           status: DEPOSIT_STATUS.NOT_REQUIRED,
@@ -44,46 +74,46 @@ class TenantService {
   async getTenantById(id) {
     const tenantRef = doc(db, 'tenants', id);
     const tenantSnap = await getDoc(tenantRef);
-    
+
     if (!tenantSnap.exists()) {
       return null;
     }
-    
+
     return { id: tenantSnap.id, ...tenantSnap.data() };
   }
 
   async getPaymentStatus(tenantId) {
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-    
+
     if (!tenantSnap.exists()) {
       return null;
     }
-    
+
     const tenant = tenantSnap.data();
     let monthlyTracking = tenant.monthlyPaymentTracking || null;
     const currentMonth = getCurrentMonth();
-    
+
     // Initialize monthly tracking if needed
     if (!monthlyTracking || monthlyTracking.month !== currentMonth) {
       const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode));
       const unitsSnapshot = await getDocs(unitsQuery);
-      
+
       if (!unitsSnapshot.empty) {
         const unit = unitsSnapshot.docs[0].data();
-        
+
         const rent = parseFloat(unit.rentAmount) || 0;
         const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
         const water = parseFloat(unit.utilityFees?.waterBill) || 0;
         const deposit = parseFloat(unit.depositAmount) || 0;
-        
+
         const isNewTenant = isMovedInThisMonth(tenant.moveInDate);
         const depositPending = tenant.rentDeposit?.status === DEPOSIT_STATUS.PENDING;
         const includeDeposit = isNewTenant && depositPending && deposit > 0;
-        
+
         const monthlyRent = rent + garbage + water;
         const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-        
+
         monthlyTracking = {
           month: currentMonth,
           expectedAmount: totalExpected,
@@ -99,14 +129,14 @@ class TenantService {
           includesDeposit: includeDeposit,
           depositRequired: includeDeposit ? deposit : 0
         };
-        
+
         await updateDoc(tenantRef, {
           monthlyPaymentTracking: monthlyTracking,
           updatedAt: new Date().toISOString()
         });
       }
     }
-    
+
     monthlyTracking = monthlyTracking || {
       month: currentMonth,
       expectedAmount: 0,
@@ -116,7 +146,7 @@ class TenantService {
       payments: [],
       breakdown: { deposit: 0, rent: 0, utilities: 0 }
     };
-    
+
     return {
       tenantId,
       tenantName: tenant.name,
@@ -157,57 +187,30 @@ class TenantService {
 
     const now = new Date().toISOString();
     const depositAmount = unit.depositAmount || 0;
-    
+
     const completeTenantData = {
       name: name.trim(),
       unitCode,
       phone: phone.trim(),
       propertyId: unit.propertyId,
-      
+
+      // Property details, stripped of rent/deposit amounts
       propertyDetails: tenantData.propertyDetails || {
         propertyId: unit.propertyId,
         propertyName: propertyDoc.exists() ? propertyDoc.data().propertyName : 'Unknown',
         unitCategory: unit.category || 'Unknown',
-        rentAmount: unit.rentAmount || 0,
-        depositAmount: depositAmount,
       },
-      
-      rentDeposit: tenantData.rentDeposit || {
-        amount: depositAmount,
-        status: depositAmount > 0 ? DEPOSIT_STATUS.PENDING : DEPOSIT_STATUS.NOT_REQUIRED,
-        paidDate: null,
-        refundStatus: depositAmount > 0 ? 'active' : 'not_applicable',
-        notes: depositAmount > 0 ? `Security deposit of KSH ${depositAmount} required` : 'No deposit required',
-      },
-      
-      paymentTimeline: tenantData.paymentTimeline || {
-        leaseStartDate: now,
-        leaseEndDate: null,
-        rentDueDay: 1,
-        nextPaymentDate: new Date(new Date().setMonth(new Date().getMonth() + 1, 1)).toISOString(),
-        lastPaymentDate: null,
-        paymentFrequency: 'monthly',
-      },
-      
-      paymentLogs: tenantData.paymentLogs || [],
-      
-      financialSummary: tenantData.financialSummary || {
-        totalPaid: 0,
-        totalDue: unit.rentAmount || 0,
-        arrears: unit.rentAmount || 0,
-        balance: 0,
-        depositAmount: depositAmount,
-        depositStatus: depositAmount > 0 ? DEPOSIT_STATUS.PENDING : DEPOSIT_STATUS.NOT_REQUIRED,
-        lastUpdated: now,
-      },
-      
-      arrears: unit.rentAmount || 0,
-      tenantStatus: tenantData.tenantStatus || TENANT_STATUS.ACTIVE,
+
+      // Payments array to track transaction IDs only
+      payments: tenantData.payments || [],
+
+      // Basic tenant info
+      tenantStatus: tenantData.tenantStatus || 'active',
       moveInDate: tenantData.moveInDate || now,
       moveOutDate: tenantData.moveOutDate || null,
       createdAt: id ? undefined : now,
       updatedAt: now,
-      
+
       contactInfo: tenantData.contactInfo || {
         email: null,
         alternatePhone: null,
@@ -217,32 +220,53 @@ class TenantService {
           relationship: null,
         },
       },
-      
+
       identification: tenantData.identification || {
         idNumber: null,
         idType: null,
         idDocumentUrl: null,
       },
-      
+
       notes: tenantData.notes || {
         moveInNotes: 'New tenant added via mobile app',
         specialTerms: null,
         restrictions: null,
       },
-      
+
       utilityFees: tenantData.utilityFees || unit.utilityFees || {
         garbageFee: 0,
         waterBill: 0,
         electricity: 0,
         other: 0,
       },
+
+      // Initial Financial State
+      arrears: 0,
+      financialSummary: {
+        totalPaid: 0,
+        arrears: 0,
+        balance: 0,
+        depositAmount: tenantData.isExistingTenant ? 0 : depositAmount,
+        depositStatus: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
+        lastUpdated: now,
+        totalDue: 0
+      },
+
+      // Security Deposit Logic
+      rentDeposit: {
+        amount: tenantData.isExistingTenant ? 0 : depositAmount,
+        status: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
+        paidDate: null,
+        refundStatus: 'not_applicable',
+      },
     };
+
 
     let tenantId;
     let isNewTenant = false;
 
     if (id) {
-      Object.keys(completeTenantData).forEach(key => 
+      Object.keys(completeTenantData).forEach(key =>
         completeTenantData[key] === undefined && delete completeTenantData[key]
       );
       await updateDoc(doc(db, 'tenants', id), completeTenantData);
@@ -322,16 +346,17 @@ class TenantService {
       } else if (!formattedPhoneForSMS.startsWith('+254') && !formattedPhoneForSMS.startsWith('254')) {
         formattedPhoneForSMS = '+254' + formattedPhoneForSMS;
       }
-      
+
       const utilityFeesData = tenantData.utilityFees;
-      const totalUtilityFees = (utilityFeesData.garbageFee || 0) + 
-                               (utilityFeesData.waterBill || 0) + 
-                               (utilityFeesData.electricity || 0) + 
-                               (utilityFeesData.other || 0);
+      const totalUtilityFees = (utilityFeesData.garbageFee || 0) +
+        (utilityFeesData.waterBill || 0) +
+        (utilityFeesData.electricity || 0) +
+        (utilityFeesData.other || 0);
       const rentAmount = unit.rentAmount || 0;
       const totalMonthlyCharge = rentAmount + totalUtilityFees;
-      const depositAmount = unit.depositAmount || 0;
-      
+      // Use the actual deposit amount set on the tenant record (will be 0 for existing tenants)
+      const depositAmount = tenantData.rentDeposit ? tenantData.rentDeposit.amount : (unit.depositAmount || 0);
+
       const paymentInfo = {
         paybill: '522533',
         accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
@@ -375,7 +400,7 @@ class TenantService {
 
   async deleteTenant(tenantId) {
     const start = Date.now();
-    
+
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
 
@@ -456,11 +481,11 @@ class TenantService {
   async sendReminder(tenantId) {
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-    
+
     if (!tenantSnap.exists()) {
       throw new Error('Tenant not found');
     }
-    
+
     const tenant = tenantSnap.data();
 
     if (!tenant.arrears || tenant.arrears <= 0) {
@@ -492,11 +517,11 @@ class TenantService {
 
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-    
+
     if (!tenantSnap.exists()) {
       throw new Error('Tenant not found');
     }
-    
+
     const tenant = tenantSnap.data();
 
     const debt = {

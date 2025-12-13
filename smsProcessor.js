@@ -1,5 +1,5 @@
 const { getFirestoreApp } = require('./firebase');
-const { doc, getDoc, setDoc, collection, query, where, getDocs, updateDoc } = require('firebase/firestore');
+const { doc, getDoc, setDoc, collection, query, where, getDocs, updateDoc, arrayUnion } = require('firebase/firestore');
 const SMSService = require('./smsService');
 
 const db = getFirestoreApp();
@@ -355,34 +355,30 @@ const processRentalPayment = async (paymentData) => {
     await setDoc(financialRecordRef, financialRecord);
     
     console.log('✅ Financial record created:', timestamp);
-    
     // ============================================
-    // 5️⃣ UPDATE TENANT SUMMARY (Optional)
-    // ============================================
+// 5️⃣ UPDATE TENANT PAYMENT HISTORY (payments array)
+// ============================================
+
+const paymentEntry = {
+  paymentId: timestamp,        // SAME ID used as doc ID in financial_records
+  amount,
+  paymentMonth,
+  allocation: {
+    deposit: allocatedToDeposit,
+    rent: allocatedToRent,
+    utilities: allocatedToUtilities
+  },
+  date: timestamp
+};
+
+// Append to payments[] array
+await updateDoc(doc(db, 'tenants', tenant.id), {
+  payments: arrayUnion(paymentEntry)
+});
+
     
-    const currentArrears = tenant.financialSummary?.arrears || tenant.arrears || 0;
-    const newArrears = Math.max(0, currentArrears - amount);
-    const totalPaid = (tenant.financialSummary?.totalPaid || 0) + amount;
-    
-    // Update deposit status if fully paid
-    let updatedDepositStatus = tenant.rentDeposit?.status || 'not_required';
-    let depositPaidDate = tenant.rentDeposit?.paidDate || null;
-    
-    if (depositRequired > 0 && totalDepositPaid >= depositRequired) {
-      updatedDepositStatus = 'paid';
-      depositPaidDate = timestamp;
-    }
-    
-    await updateDoc(doc(db, 'tenants', tenant.id), {
-      'financialSummary.arrears': newArrears,
-      'financialSummary.totalPaid': totalPaid,
-      'financialSummary.lastPaymentDate': timestamp,
-      'financialSummary.lastPaymentAmount': amount,
-      'financialSummary.lastUpdated': timestamp,
-      'rentDeposit.status': updatedDepositStatus,
-      'rentDeposit.paidDate': depositPaidDate,
-      updatedAt: timestamp
-    });
+
+ 
     
     // ============================================
     // 6️⃣ SEND SMS CONFIRMATION
@@ -436,7 +432,6 @@ const processRentalPayment = async (paymentData) => {
         },
         monthlyStatus,
         remainingAmount: remainingTotal,
-        depositStatus: updatedDepositStatus,
         matchStrategy
       }
     };
