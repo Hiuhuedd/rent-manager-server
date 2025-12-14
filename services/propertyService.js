@@ -29,7 +29,7 @@ class PropertyService {
 
     const propertyData = propertySnap.data();
     const unitIds = propertyData.propertyUnitIds || [];
-    
+
     const unitRefs = unitIds.map(uid => doc(db, 'units', uid));
     const unitSnaps = await Promise.all(unitRefs.map(ref => getDoc(ref)));
 

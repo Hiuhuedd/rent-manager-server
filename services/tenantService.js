@@ -381,8 +381,12 @@ class TenantService {
       // Use the actual deposit amount set on the tenant record (will be 0 for existing tenants)
       const depositAmount = tenantData.rentDeposit ? tenantData.rentDeposit.amount : (unit.depositAmount || 0);
 
+      // Fetch paybill from settings
+      const settingsService = require('./settingsService');
+      const settings = await settingsService.getSettings();
+
       const paymentInfo = {
-        paybill: '522533',
+        paybill: settings.paybill,
         accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
       };
 
