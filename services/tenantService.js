@@ -235,26 +235,6 @@ class TenantService {
 
       utilityFees: tenantData.utilityFees || unit.utilityFees || {
         garbageFee: 0,
-        waterBill: 0,
-        electricity: 0,
-        other: 0,
-      },
-
-      // Initial Financial State
-      arrears: 0,
-      financialSummary: {
-        totalPaid: 0,
-        arrears: 0,
-        balance: 0,
-        depositAmount: tenantData.isExistingTenant ? 0 : depositAmount,
-        depositStatus: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
-        lastUpdated: now,
-        totalDue: 0
-      },
-
-      // Security Deposit Logic
-      rentDeposit: {
-        amount: tenantData.isExistingTenant ? 0 : depositAmount,
         status: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
         paidDate: null,
         refundStatus: 'not_applicable',
