@@ -248,6 +248,43 @@ class TenantService {
       },
     };
 
+    // Calculate initial financial state
+    const utilityFeesData = completeTenantData.utilityFees;
+    const totalUtilityFees = (utilityFeesData.garbageFee || 0) +
+      (utilityFeesData.waterBill || 0) +
+      (utilityFeesData.electricity || 0) +
+      (utilityFeesData.other || 0);
+
+    const rentAmount = unit.rentAmount || 0;
+    const depositAmountToPay = completeTenantData.rentDeposit.amount;
+
+    const totalInitialDue = rentAmount + totalUtilityFees + depositAmountToPay;
+
+    // Add financial fields to completeTenantData
+    completeTenantData.arrears = totalInitialDue;
+    completeTenantData.financialSummary = {
+      totalPaid: 0,
+      arrears: totalInitialDue,
+      balance: -totalInitialDue, // Negative balance indicates amount due
+    };
+
+    // Initialize monthly tracking
+    completeTenantData.monthlyPaymentTracking = {
+      month: getCurrentMonth(),
+      expectedAmount: totalInitialDue,
+      paidAmount: 0,
+      remainingAmount: totalInitialDue,
+      status: PAYMENT_STATUS.UNPAID,
+      payments: [],
+      breakdown: {
+        deposit: depositAmountToPay,
+        rent: rentAmount,
+        utilities: totalUtilityFees
+      },
+      includesDeposit: !tenantData.isExistingTenant,
+      depositRequired: depositAmountToPay
+    };
+
 
     let tenantId;
     let isNewTenant = false;
