@@ -235,6 +235,13 @@ class TenantService {
 
       utilityFees: tenantData.utilityFees || unit.utilityFees || {
         garbageFee: 0,
+        waterBill: 0,
+        electricity: 0,
+        other: 0,
+      },
+
+      rentDeposit: {
+        amount: tenantData.isExistingTenant ? 0 : (unit.depositAmount || 0),
         status: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
         paidDate: null,
         refundStatus: 'not_applicable',
