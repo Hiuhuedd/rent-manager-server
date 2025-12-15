@@ -7,19 +7,17 @@ const { doc, getDoc, setDoc, serverTimestamp } = require('firebase/firestore');
 const SETTINGS_DOC_ID = 'app-settings';
 
 class SettingsService {
-    /**
-     * Get application settings
-     * @returns {Promise<Object>} Settings object with paybill, etc.
-     */
     async getSettings() {
         try {
             const settingsRef = doc(db, 'settings', SETTINGS_DOC_ID);
             const settingsSnap = await getDoc(settingsRef);
 
             if (!settingsSnap.exists()) {
-                // Return default settings if not configured
                 return {
-                    paybill: '522533', // Default paybill
+                    paybill: '522533',
+                    paymentMethod: 'mpesa',
+                    customerServiceNumber: '',
+                    reminderConfig: { dayOfMonth: 15, time: '14:10' },
                     updatedAt: null,
                 };
             }
@@ -27,6 +25,9 @@ class SettingsService {
             const data = settingsSnap.data();
             return {
                 paybill: data.paybill || '522533',
+                paymentMethod: data.paymentMethod || 'mpesa',
+                customerServiceNumber: data.customerServiceNumber || '',
+                reminderConfig: data.reminderConfig || { dayOfMonth: 15, time: '14:10' },
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
         } catch (error) {
@@ -35,12 +36,6 @@ class SettingsService {
         }
     }
 
-    /**
-     * Update application settings
-     * @param {Object} updates - Settings to update
-     * @param {string} updates.paybill - Paybill number
-     * @returns {Promise<Object>} Updated settings
-     */
     async updateSettings(updates) {
         try {
             const settingsRef = doc(db, 'settings', SETTINGS_DOC_ID);
@@ -54,9 +49,8 @@ class SettingsService {
 
             console.log('[SettingsService] Settings updated successfully');
 
-            // Return the updated settings (without timestamp since it's server-side)
             return {
-                paybill: updates.paybill,
+                ...updates,
                 updatedAt: new Date(),
             };
         } catch (error) {

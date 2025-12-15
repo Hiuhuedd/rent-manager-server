@@ -20,16 +20,22 @@ class SettingsController {
 
     async updateSettings(req, res) {
         try {
-            const { paybill } = req.body;
+            const { paybill, paymentMethod, customerServiceNumber, reminderConfig } = req.body;
 
-            if (!paybill || typeof paybill !== 'string') {
+            const updates = {};
+            if (paybill !== undefined) updates.paybill = paybill;
+            if (paymentMethod !== undefined) updates.paymentMethod = paymentMethod;
+            if (customerServiceNumber !== undefined) updates.customerServiceNumber = customerServiceNumber;
+            if (reminderConfig !== undefined) updates.reminderConfig = reminderConfig;
+
+            if (Object.keys(updates).length === 0) {
                 return res.status(400).json({
                     success: false,
-                    error: 'Paybill number is required and must be a string',
+                    error: 'No valid settings provided to update',
                 });
             }
 
-            const settings = await settingsService.updateSettings({ paybill });
+            const settings = await settingsService.updateSettings(updates);
             res.json(createSuccessResponse(settings, 'Settings updated successfully'));
         } catch (error) {
             console.error('[SettingsController] Error updating settings:', error);
