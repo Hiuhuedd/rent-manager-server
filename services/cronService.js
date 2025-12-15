@@ -1,10 +1,11 @@
-  
+
 // ============================================
 // FILE: src/services/cronService.js
 // ============================================
-const { initializeMonthlyCronJob, createManualResetEndpoint } = require('../cronScheduler');
+const { initializeMonthlyCronJob, initializeReminderCronJob, createManualResetEndpoint } = require('../cronScheduler');
 
 module.exports = {
   initializeMonthlyCronJob,
+  initializeReminderCronJob,
   createManualResetEndpoint
 };

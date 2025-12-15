@@ -42,7 +42,7 @@ const cors = require('cors');
 const routes = require('./routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/logger');
-const { initializeMonthlyCronJob, createManualResetEndpoint } = require('./services/cronService');
+const { initializeMonthlyCronJob, initializeReminderCronJob, createManualResetEndpoint } = require('./services/cronService');
 
 const app = express();
 
@@ -53,6 +53,7 @@ app.use(requestLogger);
 
 // Initialize cron jobs
 initializeMonthlyCronJob();
+initializeReminderCronJob();
 createManualResetEndpoint(app);
 
 // Routes
