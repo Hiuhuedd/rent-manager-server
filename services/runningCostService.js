@@ -26,7 +26,7 @@ class RunningCostService {
             feeName,
             amount: parseFloat(amount) || 0,
             description: description || '',
-            date: date || new Date(),
+            date: date ? new Date(date) : new Date(),
             createdBy: createdBy || 'system',
             createdAt: serverTimestamp(),
         };
@@ -52,12 +52,20 @@ class RunningCostService {
         );
 
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            date: doc.data().date?.toDate?.() || null,
-            createdAt: doc.data().createdAt?.toDate?.() || null,
-        }));
+        return snapshot.docs.map(doc => {
+            const data = doc.data();
+            let dateObj = null;
+            if (data.date) {
+                // Handle Firestore Timestamp or ISO String
+                dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+            }
+            return {
+                id: doc.id,
+                ...data,
+                date: dateObj,
+                createdAt: data.createdAt?.toDate?.() || null,
+            };
+        });
     }
 
     /**
@@ -69,11 +77,21 @@ class RunningCostService {
         const startDate = new Date(year, monthNum - 1, 1);
         const endDate = new Date(year, monthNum, 0, 23, 59, 59);
 
+        console.log(`[DEBUG] Report for ${month} (${propertyId})`);
+        console.log(`[DEBUG] Window: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
         const allCosts = await this.getCostsByProperty(propertyId);
+        console.log(`[DEBUG] Fetched ${allCosts.length} costs for property`);
 
         return allCosts.filter(cost => {
             const costDate = cost.date;
-            return costDate >= startDate && costDate <= endDate;
+            if (!costDate) {
+                console.log(`[DEBUG] Cost ${cost.id} skipped (no date)`);
+                return false;
+            }
+            const inRange = costDate >= startDate && costDate <= endDate;
+            console.log(`[DEBUG] Cost ${cost.id} (${costDate.toISOString()}): ${inRange ? 'INCLUDE' : 'EXCLUDE'}`);
+            return inRange;
         });
     }
 
