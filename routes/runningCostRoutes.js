@@ -1,0 +1,15 @@
+// ============================================
+// FILE: src/routes/runningCostRoutes.js
+// ============================================
+const express = require('express');
+const router = express.Router();
+const runningCostController = require('../controllers/runningCostController');
+const { asyncHandler } = require('../middleware/errorHandler');
+
+router.post('/', asyncHandler(runningCostController.addCost));
+router.get('/property/:propertyId', asyncHandler(runningCostController.getCostsByProperty));
+router.get('/property/:propertyId/month/:month', asyncHandler(runningCostController.getCostsByPropertyAndMonth));
+router.get('/property/:propertyId/month/:month/total', asyncHandler(runningCostController.getTotalCostsByMonth));
+router.delete('/:id', asyncHandler(runningCostController.deleteCost));
+
+module.exports = router;

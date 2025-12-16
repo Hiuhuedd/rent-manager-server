@@ -1,4 +1,4 @@
-  
+
 // ============================================
 // FILE: src/controllers/propertyController.js
 // ============================================
@@ -13,14 +13,14 @@ class PropertyController {
 
   async getPropertyById(req, res) {
     const property = await propertyService.getPropertyById(req.params.id);
-    
+
     if (!property) {
       return res.status(404).json({
         success: false,
         error: 'Property not found'
       });
     }
-    
+
     res.json(createSuccessResponse(property));
   }
 
@@ -31,15 +31,27 @@ class PropertyController {
 
   async updateProperty(req, res) {
     const result = await propertyService.updateProperty(req.params.id, req.body);
-    
+
     if (!result) {
       return res.status(404).json({
         success: false,
         error: 'Property not found'
       });
     }
-    
+
     res.json(createSuccessResponse(result, 'Property updated successfully'));
+  }
+
+  async deleteProperty(req, res) {
+    try {
+      await propertyService.deleteProperty(req.params.id);
+      res.json(createSuccessResponse({ success: true }, 'Property deleted successfully'));
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error.message
+      });
+    }
   }
 }
 

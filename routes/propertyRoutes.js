@@ -1,4 +1,4 @@
-  
+
 // ============================================
 // FILE: src/routes/propertyRoutes.js
 // ============================================
@@ -12,5 +12,6 @@ router.get('/', asyncHandler(propertyController.getAllProperties));
 router.get('/:id', asyncHandler(propertyController.getPropertyById));
 router.post('/', validatePropertyInput, asyncHandler(propertyController.createProperty));
 router.put('/:id', validatePropertyInput, asyncHandler(propertyController.updateProperty));
+router.delete('/:id', asyncHandler(propertyController.deleteProperty));
 
 module.exports = router;

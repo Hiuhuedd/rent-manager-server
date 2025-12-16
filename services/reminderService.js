@@ -91,11 +91,15 @@ class ReminderService {
         const name = tenant.name || 'Tenant';
         const unitCode = tenant.unitCode || '';
         const rentAmount = tenant.rentAmount || 0;
+        const arrears = tenant.arrears || 0;
         const accountNumber = tenant.phone?.trim().startsWith('0')
             ? tenant.phone.trim()
             : `0${tenant.phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`;
 
-        return `Hi ${name}, this is a reminder that your rent for ${unitCode} (KES ${rentAmount.toLocaleString()}) is due on the 1st. Pay via Paybill ${paybill}, Acc ${accountNumber}. Call ${customerServiceNumber} for assistance.`;
+        // Use arrears if available, otherwise fall back to rent amount
+        const amountDue = arrears > 0 ? arrears : rentAmount;
+
+        return `Hi ${name}, this is a reminder that your rent for ${unitCode} (KES ${amountDue.toLocaleString()}) is due on the 1st. Pay via Paybill ${paybill}, Acc ${accountNumber}. Call ${customerServiceNumber} for assistance.`;
     }
 
     /**

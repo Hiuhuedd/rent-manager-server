@@ -193,6 +193,41 @@ class PropertyService {
       durationMs: Date.now() - start,
     };
   }
+
+  async deleteProperty(propertyId) {
+    const start = Date.now();
+
+    // 1. Fetch property details to check occupancy
+    const property = await this.getPropertyById(propertyId);
+    if (!property) {
+      throw new Error('Property not found');
+    }
+
+    // 2. Check for active tenants
+    const hasActiveTenants = property.units.some(unit => !unit.isVacant);
+    if (hasActiveTenants) {
+      throw new Error('Cannot delete property with active tenants. Please remove tenants first.');
+    }
+
+    // 3. Batch delete units and property
+    const batch = writeBatch(db);
+
+    // Delete all units
+    property.units.forEach(unit => {
+      const unitRef = doc(db, 'units', unit.unitId);
+      batch.delete(unitRef);
+    });
+
+    // Delete property document
+    const propertyRef = doc(db, 'properties', propertyId);
+    batch.delete(propertyRef);
+
+    await batch.commit();
+
+    console.log(`[SUCCESS] Property deleted: ${propertyId} | Duration: ${Date.now() - start}ms`);
+    return { success: true };
+  }
+
 }
 
 module.exports = new PropertyService();
