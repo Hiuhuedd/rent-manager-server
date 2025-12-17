@@ -1,0 +1,33 @@
+--- DEBUGGING FINANCIAL RECORDS ---
+Target Month: "2025-12"
+Target PropertyId: "Hv2AxSMAtxU1QKGqrhGy"
+
+1. Fetching Property Tenants...
+Found 2 tenants.
+ - Tenant: Edward H (LMZVtCJ0FHSgOFufU6oF)
+ - Tenant: Fj (tlJDWAfFyqPqpKaGlErM)
+
+2. Fetching Financial Records for Month...
+Found 3 total records for month.
+
+3. Inspecting Records vs Property...
+
+MATCH FOUND (ID: 2025-12-17T08:46:33.214Z):
+- Amount: 10000 (Type: number)
+- PropertyId Match: true ("Hv2AxSMAtxU1QKGqrhGy")
+- TenantId Match: true ("LMZVtCJ0FHSgOFufU6oF")
+- Allocation:
+
+MATCH FOUND (ID: 2025-12-17T14:58:26.898Z):
+- Amount: 30000 (Type: number)
+- PropertyId Match: true ("Hv2AxSMAtxU1QKGqrhGy")
+- TenantId Match: true ("LMZVtCJ0FHSgOFufU6oF")
+- Allocation:
+
+MATCH FOUND (ID: 2025-12-17T15:00:09.625Z):
+- Amount: 28000 (Type: number)
+- PropertyId Match: true ("Hv2AxSMAtxU1QKGqrhGy")
+- TenantId Match: true ("LMZVtCJ0FHSgOFufU6oF")
+- Allocation:
+
+Total Matches for Property: 3

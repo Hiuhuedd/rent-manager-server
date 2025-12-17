@@ -18,6 +18,8 @@ class ReportService {
      * Aggregates Rent Collected vs Running Costs
      */
     async generatePropertyReport(propertyId, month) {
+        console.log(`[ReportService] Generating report for Property: ${propertyId}, Month: ${month}`);
+
         // 1. Fetch Property Details
         const propertyRef = doc(db, 'properties', propertyId);
         const propertySnap = await getDoc(propertyRef);
@@ -32,59 +34,40 @@ class ReportService {
         // 3. Fetch Rent Payments Magnitude
         // month format YYYY-MM
         const [year, monthNum] = month.split('-').map(Number);
-        const startDate = new Date(year, monthNum - 1, 1);
-        const endDate = new Date(year, monthNum, 0, 23, 59, 59);
 
-        // Query payments collection
-        // Note: This relies on a 'paymentDate' or 'createdAt' field in payments
-        // And ideally a 'propertyId' field. If payments only have 'tenantId', we might need to filter.
-        // Assuming payments have 'propertyId' or we query tenancy first.
-        // Let's assume payments are stored with propertyId for easier reporting
-        // If not, we fetch all tenants of property -> then payments of those tenants.
+        // STRATEGY: Fetch all tenants for this property first, then filter payments by those tenants.
+        // This is more robust than relying on 'propertyId' existing on the payment record itself.
 
-        // Efficient approach: Query payments by propertyIdKey (if exists) or iterate units -> tenants -> payments
-        // Given the current structure, let's look at how payments are structured.
-        // (Assuming standard payments collection structure from previous knowledge)
+        // A. Fetch all tenants for this property
+        const tenantsQuery = query(
+            collection(db, 'tenants'),
+            where('propertyId', '==', propertyId)
+        );
+        const tenantsSnap = await getDocs(tenantsQuery);
+        const propertyTenants = tenantsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const tenantIds = new Set(propertyTenants.map(t => t.id));
+        console.log(`[ReportService] Found ${propertyTenants.length} tenants for property.`);
 
-        // Fallback: Fetch units -> tenants -> payments check
-        // Optimization: create a dedicated query if possible.
-        // For now, let's fetch payments where propertyId matches (if supported)
-        // If payments collection doesn't have propertyId, we might need a workaround.
-        // Let's assume we can filter by propertyId if it was added, otherwise we iterate.
-
-        // Checking payment structure strategy:
-        // We will query "payments" collection.
-        // We filter in memory if necessary or use compound query.
-
+        // B. Fetch all financial records for the month
         const paymentsQuery = query(
-            collection(db, 'payments'),
-            where('propertyId', '==', propertyId),
-            where('paymentDate', '>=', startDate),
-            where('paymentDate', '<=', endDate)
+            collection(db, 'financial_records'),
+            where('paymentMonth', '==', month)
         );
 
-        // NOTE: Requires composite index on propertyId + paymentDate
-        // If index missing, we might need to fetch by propertyId and filter date in memory
+        const paymentsSnapshot = await getDocs(paymentsQuery);
+        const allPayments = paymentsSnapshot.docs.map(doc => doc.data());
+        console.log(`[ReportService] Fetched ${allPayments.length} total financial records for month.`);
 
-        let paymentsSnapshot;
-        try {
-            paymentsSnapshot = await getDocs(paymentsQuery);
-        } catch (e) {
-            // Fallback if index missing or error: fetch by propertyId only
-            const q = query(collection(db, 'payments'), where('propertyId', '==', propertyId));
-            const snap = await getDocs(q);
-            // Filter in memory
-            paymentsSnapshot = {
-                docs: snap.docs.filter(d => {
-                    const pDate = d.data().paymentDate?.toDate();
-                    return pDate >= startDate && pDate <= endDate;
-                })
-            };
-        }
-
-        const payments = paymentsSnapshot.docs.map(doc => doc.data());
+        // C. Filter payments that belong to tenants of this property
+        // We check if payment.tenantId matches one of our property's tenants
+        // OR if payment.propertyId matches (for direct association)
+        const payments = allPayments.filter(p =>
+            tenantIds.has(p.tenantId) || p.propertyId === propertyId
+        );
+        console.log(`[ReportService] Filtered ${payments.length} payments relevant to property.`);
 
         const totalRentCollected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        console.log(`[ReportService] Total Rent Collected: ${totalRentCollected}`);
 
         // 4. Calculate Net Income
         const netIncome = totalRentCollected - costsSummary.totalAmount;
@@ -105,10 +88,10 @@ class ReportService {
                     total: totalRentCollected,
                     transactionCount: payments.length,
                     breakdown: payments.map(p => ({
-                        unit: p.unitId,
+                        unit: p.unitCode || p.unitId,
                         amount: p.amount,
-                        date: p.paymentDate?.toDate(),
-                        type: p.paymentType // Rent, Deposit, etc.
+                        date: p.timestamp ? new Date(p.timestamp) : (p.paymentDate ? new Date(p.paymentDate) : null),
+                        type: 'Rent'
                     }))
                 },
                 expenses: {
