@@ -20,13 +20,24 @@ class SettingsController {
 
     async updateSettings(req, res) {
         try {
-            const { paybill, paymentMethod, customerServiceNumber, reminderConfig } = req.body;
+            const {
+                agencyName,
+                paybill,
+                paymentMethod,
+                customerServiceNumber,
+                reminderConfig,
+                templates,
+                onboardingCompleted
+            } = req.body;
 
             const updates = {};
+            if (agencyName !== undefined) updates.agencyName = agencyName;
             if (paybill !== undefined) updates.paybill = paybill;
             if (paymentMethod !== undefined) updates.paymentMethod = paymentMethod;
             if (customerServiceNumber !== undefined) updates.customerServiceNumber = customerServiceNumber;
             if (reminderConfig !== undefined) updates.reminderConfig = reminderConfig;
+            if (templates !== undefined) updates.templates = templates;
+            if (onboardingCompleted !== undefined) updates.onboardingCompleted = onboardingCompleted;
 
             if (Object.keys(updates).length === 0) {
                 return res.status(400).json({
