@@ -58,21 +58,21 @@ class PaymentService {
       where('tenantId', '==', tenantId),
       where('paymentMonth', '==', targetMonth)
     );
-    
+
     const paymentsSnapshot = await getDocs(paymentsQuery);
     const payments = paymentsSnapshot.docs.map(doc => doc.data());
-    
+
     if (payments.length === 0) {
       return null;
     }
-    
+
     // Get the most recent payment for monthly tracking status
-    const sortedPayments = payments.sort((a, b) => 
+    const sortedPayments = payments.sort((a, b) =>
       new Date(b.timestamp) - new Date(a.timestamp)
     );
-    
+
     const latestPayment = sortedPayments[0];
-    
+
     return {
       totalPaid: payments.reduce((sum, p) => sum + p.amount, 0),
       paymentCount: payments.length,
@@ -94,7 +94,7 @@ class PaymentService {
 
     // Filter units that existed in target month
     const units = allUnits.filter(unit => this.isRecordActiveInMonth(unit, targetMonth));
-    
+
     // Filter tenants that existed in target month
     const tenants = allTenants.filter(tenant => this.isRecordActiveInMonth(tenant, targetMonth));
 
@@ -102,7 +102,7 @@ class PaymentService {
 
     for (const unit of units) {
       const tenant = tenants.find(t => t.unitCode === unit.code);
-      
+
       if (!tenant) {
         status.push({
           unitCode: unit.code,
@@ -113,9 +113,9 @@ class PaymentService {
         });
         continue;
       }
-      
+
       const monthlyPayments = await this.getTenantMonthlyPayments(tenant.id, targetMonth);
-      
+
       status.push({
         unitCode: unit.code,
         month: targetMonth,
@@ -137,7 +137,7 @@ class PaymentService {
     const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter properties that existed in target month
-    const properties = allProperties.filter(property => 
+    const properties = allProperties.filter(property =>
       this.isRecordActiveInMonth(property, targetMonth)
     );
 
@@ -153,7 +153,7 @@ class PaymentService {
 
     properties.forEach(property => {
       const propertyPayments = monthPayments.filter(p => p.propertyId === property.id);
-      
+
       const total = propertyPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
       if (total > 0) {
@@ -172,7 +172,7 @@ class PaymentService {
   async getMonthlyReport(month) {
     const targetMonth = month || getCurrentMonth();
     console.log(`📊 Generating monthly report for: ${targetMonth}`);
-    
+
     const [year, monthNum] = targetMonth.split('-').map(Number);
 
     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
@@ -184,15 +184,15 @@ class PaymentService {
     const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter records that existed in target month
-    const activeTenants = allTenants.filter(tenant => 
+    const activeTenants = allTenants.filter(tenant =>
       this.isRecordActiveInMonth(tenant, targetMonth)
     );
-    
-    const activeUnits = allUnits.filter(unit => 
+
+    const activeUnits = allUnits.filter(unit =>
       this.isRecordActiveInMonth(unit, targetMonth)
     );
 
-    const activeProperties = allProperties.filter(property => 
+    const activeProperties = allProperties.filter(property =>
       this.isRecordActiveInMonth(property, targetMonth)
     );
 
@@ -204,7 +204,7 @@ class PaymentService {
       where('paymentMonth', '==', targetMonth)
     );
     const financialRecordsSnapshot = await getDocs(financialRecordsQuery);
-    
+
     // Group financial records by tenant
     const paymentsByTenant = new Map();
     financialRecordsSnapshot.docs.forEach(doc => {
@@ -228,7 +228,7 @@ class PaymentService {
       },
       tenants: []
     };
-    
+
     const unitsMap = new Map();
     activeUnits.forEach(unit => {
       unitsMap.set(unit.unitId || unit.code, unit);
@@ -238,7 +238,7 @@ class PaymentService {
     activeProperties.forEach(property => {
       propertiesMap.set(property.id, property);
     });
-    
+
     for (const tenant of activeTenants) {
       const unit = unitsMap.get(tenant.unitCode);
       if (!unit) {
@@ -247,13 +247,13 @@ class PaymentService {
       }
 
       const tenantPayments = paymentsByTenant.get(tenant.id) || [];
-      
+
       // Calculate expected amounts for this month
       const rent = parseFloat(unit.rentAmount) || 0;
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
       const water = parseFloat(unit.utilityFees?.waterBill) || 0;
       const deposit = parseFloat(unit.depositAmount) || 0;
-      
+
       // Check if deposit should be included this month
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
       const moveInYear = moveInDate?.getFullYear();
@@ -261,15 +261,15 @@ class PaymentService {
       const isFirstMonth = moveInYear === year && moveInMonth === monthNum;
       const depositPending = tenant.rentDeposit?.status === 'pending';
       const includeDeposit = isFirstMonth && depositPending;
-      
+
       const monthlyRent = rent + garbage + water;
       const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-      
+
       // Get tracking data from most recent payment or calculate fresh
       let tracking;
       if (tenantPayments.length > 0) {
         // Sort by timestamp descending
-        const sortedPayments = tenantPayments.sort((a, b) => 
+        const sortedPayments = tenantPayments.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
         tracking = sortedPayments[0].monthlyTracking;
@@ -299,12 +299,12 @@ class PaymentService {
           }
         };
       }
-      
+
       report.summary.totalTenants++;
       report.summary.totalExpected += tracking.expectedTotal || 0;
       report.summary.totalReceived += tracking.totalPaid || 0;
       report.summary.totalRemaining += tracking.remainingAmount || 0;
-      
+
       switch (tracking.status) {
         case PAYMENT_STATUS.PAID:
           report.summary.paidInFull++;
@@ -318,7 +318,7 @@ class PaymentService {
       }
 
       const property = propertiesMap.get(tenant.propertyId);
-      
+
       report.tenants.push({
         tenantId: tenant.id,
         name: tenant.name,
@@ -344,7 +344,7 @@ class PaymentService {
         moveOutDate: tenant.moveOutDate
       });
     }
-    
+
     console.log(`✅ Report generated: ${report.summary.totalTenants} active tenants for ${targetMonth}`);
     return report;
   }
@@ -355,31 +355,31 @@ class PaymentService {
 
     const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
     const unitsSnapshot = await getDocs(collection(db, 'units'));
-    
+
     const allTenants = tenantsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const allUnits = unitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter tenants active in target month
-    const activeTenants = allTenants.filter(tenant => 
+    const activeTenants = allTenants.filter(tenant =>
       this.isRecordActiveInMonth(tenant, targetMonth)
     );
 
-    const activeUnits = allUnits.filter(unit => 
+    const activeUnits = allUnits.filter(unit =>
       this.isRecordActiveInMonth(unit, targetMonth)
     );
-    
+
     const unitsMap = new Map();
     activeUnits.forEach(unit => {
       unitsMap.set(unit.unitId || unit.code, unit);
     });
-    
+
     // Get financial records for the target month
     const financialRecordsQuery = query(
       collection(db, 'financial_records'),
       where('paymentMonth', '==', targetMonth)
     );
     const financialRecordsSnapshot = await getDocs(financialRecordsQuery);
-    
+
     const paymentsByTenant = new Map();
     financialRecordsSnapshot.docs.forEach(doc => {
       const record = doc.data();
@@ -388,35 +388,35 @@ class PaymentService {
       }
       paymentsByTenant.get(record.tenantId).push(record);
     });
-    
+
     const overdueList = [];
     const [year, monthNum] = targetMonth.split('-').map(Number);
-    
+
     for (const tenant of activeTenants) {
       const unit = unitsMap.get(tenant.unitCode);
       if (!unit) continue;
 
       const tenantPayments = paymentsByTenant.get(tenant.id) || [];
-      
+
       // Calculate expected amounts
       const rent = parseFloat(unit.rentAmount) || 0;
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
       const water = parseFloat(unit.utilityFees?.waterBill) || 0;
       const deposit = parseFloat(unit.depositAmount) || 0;
-      
+
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
       const moveInYear = moveInDate?.getFullYear();
       const moveInMonth = moveInDate ? moveInDate.getMonth() + 1 : null;
       const isFirstMonth = moveInYear === year && moveInMonth === monthNum;
       const depositPending = tenant.rentDeposit?.status === 'pending';
       const includeDeposit = isFirstMonth && depositPending;
-      
+
       const monthlyRent = rent + garbage + water;
       const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
-      
+
       let tracking;
       if (tenantPayments.length > 0) {
-        const sortedPayments = tenantPayments.sort((a, b) => 
+        const sortedPayments = tenantPayments.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
         tracking = sortedPayments[0].monthlyTracking;
@@ -428,8 +428,11 @@ class PaymentService {
           status: PAYMENT_STATUS.UNPAID
         };
       }
-      
-      if (tracking.status !== PAYMENT_STATUS.PAID) {
+
+      const tenantArrears = tenant.financialSummary?.arrears || tenant.arrears || 0;
+
+      // Include tenant if they have unpaid current month OR existing arrears
+      if (tracking.status !== PAYMENT_STATUS.PAID || tenantArrears > 0) {
         overdueList.push({
           tenantId: tenant.id,
           name: tenant.name,
@@ -440,13 +443,13 @@ class PaymentService {
           paidAmount: tracking.totalPaid || 0,
           remainingAmount: tracking.remainingAmount || 0,
           status: tracking.status || PAYMENT_STATUS.UNPAID,
-          arrears: tenant.financialSummary?.arrears || tenant.arrears || 0,
+          arrears: tenantArrears,
           moveInDate: tenant.moveInDate,
           moveOutDate: tenant.moveOutDate
         });
       }
     }
-    
+
     console.log(`📋 Found ${overdueList.length} tenants with incomplete payments for ${targetMonth}`);
     return {
       month: targetMonth,
@@ -466,11 +469,11 @@ class PaymentService {
     const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Filter records active in target month
-    const activeTenants = allTenants.filter(tenant => 
+    const activeTenants = allTenants.filter(tenant =>
       this.isRecordActiveInMonth(tenant, targetMonth)
     );
 
-    const activeProperties = allProperties.filter(property => 
+    const activeProperties = allProperties.filter(property =>
       this.isRecordActiveInMonth(property, targetMonth)
     );
 
@@ -505,10 +508,10 @@ class PaymentService {
 
     const overdueData = await this.getOverduePayments(targetMonth);
     const overdueTenants = overdueData.tenants;
-    
+
     const remindersSent = [];
     const remindersFailed = [];
-    
+
     for (const tenantData of overdueTenants) {
       try {
         const debt = {
@@ -518,10 +521,10 @@ class PaymentService {
           paymentMethod: 'mpesa',
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         };
-        
+
         const smsMessage = smsService.generateInvoiceSMS(debt, tenantData.phone);
         const smsResult = await smsService.sendSMS(tenantData.phone, smsMessage, tenantData.tenantId, tenantData.unitCode);
-        
+
         if (smsResult.success) {
           remindersSent.push({
             tenantId: tenantData.tenantId,
@@ -530,7 +533,7 @@ class PaymentService {
             amount: tenantData.remainingAmount,
             messageId: smsResult.messageId
           });
-          
+
           await updateDoc(doc(db, 'tenants', tenantData.tenantId), {
             lastReminderSent: new Date().toISOString(),
             reminderCount: (tenantData.reminderCount || 0) + 1
@@ -550,7 +553,7 @@ class PaymentService {
         });
       }
     }
-    
+
     console.log(`📱 Reminders sent: ${remindersSent.length}, Failed: ${remindersFailed.length}`);
     return {
       month: targetMonth,
