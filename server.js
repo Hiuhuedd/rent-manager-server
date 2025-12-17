@@ -58,7 +58,6 @@ createManualResetEndpoint(app);
 
 // Routes
 app.use('/api', routes);
-app.use('/api/auth', require('./routes/authRoutes'));
 
 // Error handling (must be last)
 app.use(errorHandler);
