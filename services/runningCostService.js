@@ -130,6 +130,7 @@ class RunningCostService {
         return {
             totalAmount,
             byCategory,
+            items: costs,
             itemCount: costs.length,
         };
     }

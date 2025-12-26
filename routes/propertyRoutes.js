@@ -12,6 +12,7 @@ router.get('/', asyncHandler(propertyController.getAllProperties));
 router.get('/:id', asyncHandler(propertyController.getPropertyById));
 router.post('/', validatePropertyInput, asyncHandler(propertyController.createProperty));
 router.put('/:id', validatePropertyInput, asyncHandler(propertyController.updateProperty));
+router.put('/:id/units/:unitId', asyncHandler(propertyController.updateUnit));
 router.delete('/:id', asyncHandler(propertyController.deleteProperty));
 
 module.exports = router;

@@ -12,6 +12,7 @@ const statsRoutes = require('./statsRoutes');
 const settingsRoutes = require('./settingsRoutes');
 const runningCostRoutes = require('./runningCostRoutes');
 const reportRoutes = require('./reportRoutes');
+const waterBillRoutes = require('./waterBillRoutes');
 
 router.use('/properties', propertyRoutes);
 router.use('/tenants', tenantRoutes);
@@ -21,5 +22,6 @@ router.use('/stats', statsRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/running-costs', runningCostRoutes);
 router.use('/reports', reportRoutes);
+router.use('/water-bills', waterBillRoutes);
 
 module.exports = router;

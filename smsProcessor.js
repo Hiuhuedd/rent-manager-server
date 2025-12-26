@@ -7,18 +7,18 @@ const db = getFirestoreApp();
 // Normalize phone number to format without country code (0XXXXXXXXX)
 const normalizePhoneNumber = (phone) => {
   if (!phone) return '';
-  
+
   let cleaned = phone.replace(/[\s\-\(\)]/g, '');
   cleaned = cleaned.replace(/^\+/, '');
-  
+
   if (cleaned.startsWith('254')) {
     cleaned = '0' + cleaned.substring(3);
   }
-  
+
   if (cleaned.length === 9 && /^[17]/.test(cleaned)) {
     cleaned = '0' + cleaned;
   }
-  
+
   return cleaned;
 };
 
@@ -38,12 +38,12 @@ const getCurrentMonth = () => {
 // Check if tenant moved in this month (is a new tenant)
 const isNewTenant = (moveInDate) => {
   if (!moveInDate) return false;
-  
+
   const moveIn = new Date(moveInDate);
   const now = new Date();
-  
-  return moveIn.getMonth() === now.getMonth() && 
-         moveIn.getFullYear() === now.getFullYear();
+
+  return moveIn.getMonth() === now.getMonth() &&
+    moveIn.getFullYear() === now.getFullYear();
 };
 
 const parseMpesaWebhook = (webhookData) => {
@@ -73,7 +73,7 @@ const parseMpesaWebhook = (webhookData) => {
     // Extract and parse date
     const dateMatch = body.match(/on\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
     if (!dateMatch) throw new Error('Date not found in SMS');
-    
+
     const [, day, month, yearRaw] = dateMatch;
     const year = yearRaw.length === 2 ? 2000 + parseInt(yearRaw) : parseInt(yearRaw);
     const paymentDate = new Date(year, month - 1, day);
@@ -94,19 +94,19 @@ const parseMpesaWebhook = (webhookData) => {
     };
   } catch (error) {
     console.error('Parse failed:', error.message);
-    return { 
-      success: false, 
-      error: error.message || 'Invalid M-Pesa SMS format' 
+    return {
+      success: false,
+      error: error.message || 'Invalid M-Pesa SMS format'
     };
   }
 };
 
 const processRentalPayment = async (paymentData) => {
   try {
-    const { 
-      transactionId, 
-      amount, 
-      accountNumber, 
+    const {
+      transactionId,
+      amount,
+      accountNumber,
       senderPhone,
       senderPhoneNormalized,
       accountNumberNormalized,
@@ -123,13 +123,13 @@ const processRentalPayment = async (paymentData) => {
     // ============================================
     // 1️⃣ FIND TENANT BY PHONE NUMBER
     // ============================================
-    
+
     let tenant = null;
     let matchStrategy = '';
 
     // Try matching with account number first
     const tenantsByAccountQuery = query(
-      collection(db, 'tenants'), 
+      collection(db, 'tenants'),
       where('phone', '==', accountNumberNormalized)
     );
     const tenantsByAccountSnapshot = await getDocs(tenantsByAccountQuery);
@@ -140,11 +140,11 @@ const processRentalPayment = async (paymentData) => {
     } else {
       // Try matching with sender phone
       const tenantsByPhoneQuery = query(
-        collection(db, 'tenants'), 
+        collection(db, 'tenants'),
         where('phone', '==', senderPhoneNormalized)
       );
       const tenantsByPhoneSnapshot = await getDocs(tenantsByPhoneQuery);
-      
+
       if (!tenantsByPhoneSnapshot.empty) {
         tenant = { id: tenantsByPhoneSnapshot.docs[0].id, ...tenantsByPhoneSnapshot.docs[0].data() };
         matchStrategy = 'sender_phone';
@@ -154,9 +154,9 @@ const processRentalPayment = async (paymentData) => {
         for (const doc of allTenantsSnapshot.docs) {
           const data = doc.data();
           const normalizedTenantPhone = normalizePhoneNumber(data.phone);
-          
-          if (normalizedTenantPhone === accountNumberNormalized || 
-              normalizedTenantPhone === senderPhoneNormalized) {
+
+          if (normalizedTenantPhone === accountNumberNormalized ||
+            normalizedTenantPhone === senderPhoneNormalized) {
             tenant = { id: doc.id, ...data };
             matchStrategy = 'manual_scan';
             break;
@@ -167,9 +167,9 @@ const processRentalPayment = async (paymentData) => {
 
     if (!tenant) {
       console.error('❌ No tenant found');
-      return { 
-        success: false, 
-        error: `No tenant found for account ${accountNumber}` 
+      return {
+        success: false,
+        error: `No tenant found for account ${accountNumber}`
       };
     }
 
@@ -178,41 +178,67 @@ const processRentalPayment = async (paymentData) => {
     // ============================================
     // 2️⃣ GET UNIT DETAILS
     // ============================================
-    
+
     const unitsQuery = query(
       collection(db, 'units'),
       where('unitId', '==', tenant.unitCode)
     );
     const unitsSnapshot = await getDocs(unitsQuery);
-    
+
     if (unitsSnapshot.empty) {
       return { success: false, error: 'Unit not found for tenant' };
     }
-    
+
     const unitDoc = unitsSnapshot.docs[0];
     const unit = { id: unitDoc.id, ...unitDoc.data() };
 
     // ============================================
     // 3️⃣ CALCULATE PAYMENT ALLOCATION
     // ============================================
-    
+
     const rentAmount = parseFloat(unit.rentAmount) || 0;
     const garbageFee = parseFloat(unit.utilityFees?.garbageFee) || 0;
-    const waterBill = parseFloat(unit.utilityFees?.waterBill) || 0;
+
+    // FETCH Month-Specific Water Bill for accuracy
+    let waterBill = 0;
+    const propertyRef = doc(db, 'properties', tenant.propertyId);
+    const propertySnap = await getDoc(propertyRef);
+    const propertyData = propertySnap.exists() ? propertySnap.data() : {};
+    const isIndividualMeter = propertyData.waterMeterSettings?.meterType === 'individual';
+
+    if (isIndividualMeter) {
+      try {
+        const waterBillRef = doc(db, 'water_bills', `${tenant.propertyId}_${paymentMonth}`);
+        const waterBillSnap = await getDoc(waterBillRef);
+        if (waterBillSnap.exists()) {
+          const bills = waterBillSnap.data().bills || [];
+          const unitBill = bills.find(b => b.unitId === tenant.unitCode);
+          if (unitBill) {
+            waterBill = parseFloat(unitBill.totalBill) || 0;
+          }
+        }
+      } catch (err) {
+        console.warn(`[SMS] Failed to fetch water bill for ${paymentMonth}:`, err.message);
+      }
+    } else {
+      // Fallback to unit data if single meter or fetch failed
+      waterBill = parseFloat(unit.utilityFees?.waterBill) || 0;
+    }
+
     const utilitiesAmount = garbageFee + waterBill;
     const depositAmount = parseFloat(unit.depositAmount) || 0;
-    
-    // Check if deposit is required this month
+
+    // Check if deposit is required (Carry over existing logic)
     const isFirstMonth = isNewTenant(tenant.moveInDate);
     const depositPending = tenant.rentDeposit?.status === 'pending';
     const depositRequired = isFirstMonth && depositPending ? depositAmount : 0;
-    
+
     console.log('💰 Payment Allocation:');
     console.log(`   - New Tenant: ${isFirstMonth}`);
     console.log(`   - Deposit Required: KSh ${depositRequired}`);
     console.log(`   - Rent: KSh ${rentAmount}`);
     console.log(`   - Utilities: KSh ${utilitiesAmount}`);
-    
+
     // Get previous payments for this month
     const monthPaymentsQuery = query(
       collection(db, 'financial_records'),
@@ -220,61 +246,61 @@ const processRentalPayment = async (paymentData) => {
       where('paymentMonth', '==', paymentMonth)
     );
     const monthPaymentsSnapshot = await getDocs(monthPaymentsQuery);
-    
+
     let depositAlreadyPaid = 0;
     let rentAlreadyPaid = 0;
     let utilitiesAlreadyPaid = 0;
-    
+
     monthPaymentsSnapshot.docs.forEach(doc => {
       const payment = doc.data();
       depositAlreadyPaid += payment.allocation?.deposit || 0;
       rentAlreadyPaid += payment.allocation?.rent || 0;
       utilitiesAlreadyPaid += payment.allocation?.utilities || 0;
     });
-    
+
     // Calculate remaining amounts
     const depositRemaining = Math.max(0, depositRequired - depositAlreadyPaid);
     const rentRemaining = Math.max(0, rentAmount - rentAlreadyPaid);
     const utilitiesRemaining = Math.max(0, utilitiesAmount - utilitiesAlreadyPaid);
-    
+
     // Allocate payment
     let remainingPayment = amount;
     let allocatedToDeposit = 0;
     let allocatedToRent = 0;
     let allocatedToUtilities = 0;
-    
+
     // Priority 1: Deposit
     if (depositRemaining > 0 && remainingPayment > 0) {
       allocatedToDeposit = Math.min(remainingPayment, depositRemaining);
       remainingPayment -= allocatedToDeposit;
     }
-    
+
     // Priority 2: Rent
     if (rentRemaining > 0 && remainingPayment > 0) {
       allocatedToRent = Math.min(remainingPayment, rentRemaining);
       remainingPayment -= allocatedToRent;
     }
-    
+
     // Priority 3: Utilities
     if (utilitiesRemaining > 0 && remainingPayment > 0) {
       allocatedToUtilities = Math.min(remainingPayment, utilitiesRemaining);
       remainingPayment -= allocatedToUtilities;
     }
-    
+
     console.log(`   ✓ Deposit: KSh ${allocatedToDeposit}`);
     console.log(`   ✓ Rent: KSh ${allocatedToRent}`);
     console.log(`   ✓ Utilities: KSh ${allocatedToUtilities}`);
     console.log(`   ✓ Excess: KSh ${remainingPayment}`);
-    
+
     // Calculate totals for this month after this payment
     const totalDepositPaid = depositAlreadyPaid + allocatedToDeposit;
     const totalRentPaid = rentAlreadyPaid + allocatedToRent;
     const totalUtilitiesPaid = utilitiesAlreadyPaid + allocatedToUtilities;
     const totalMonthlyPaid = totalDepositPaid + totalRentPaid + totalUtilitiesPaid;
-    
+
     const expectedTotal = depositRequired + rentAmount + utilitiesAmount;
     const remainingTotal = Math.max(0, expectedTotal - totalMonthlyPaid);
-    
+
     // Determine payment status for this month
     let monthlyStatus = 'unpaid';
     if (totalMonthlyPaid >= expectedTotal) {
@@ -282,11 +308,11 @@ const processRentalPayment = async (paymentData) => {
     } else if (totalMonthlyPaid > 0) {
       monthlyStatus = 'partial';
     }
-    
+
     // ============================================
     // 4️⃣ CREATE FINANCIAL RECORD
     // ============================================
-    
+
     const financialRecord = {
       // Identifiers
       transactionId,
@@ -297,19 +323,19 @@ const processRentalPayment = async (paymentData) => {
       unitCode: tenant.unitCode,
       propertyId: tenant.propertyId,
       propertyName: tenant.propertyDetails?.propertyName || '',
-      
+
       // Payment details
       amount,
       paymentDate: date,
       paymentMonth,
       timestamp,
-      
+
       // Sender details
       senderName,
       senderPhone,
       accountNumber,
       matchStrategy,
-      
+
       // Allocation breakdown
       allocation: {
         deposit: allocatedToDeposit,
@@ -317,7 +343,7 @@ const processRentalPayment = async (paymentData) => {
         utilities: allocatedToUtilities,
         excess: remainingPayment
       },
-      
+
       // Monthly tracking
       monthlyTracking: {
         expectedTotal,
@@ -342,78 +368,77 @@ const processRentalPayment = async (paymentData) => {
           }
         }
       },
-      
+
       // Additional metadata
       isNewTenant: isFirstMonth,
       depositIncluded: depositRequired > 0,
       processed: true,
       createdAt: timestamp
     };
-    
+
     // Use timestamp as document ID for uniqueness and chronological ordering
     const financialRecordRef = doc(db, 'financial_records', timestamp);
     await setDoc(financialRecordRef, financialRecord);
-    
+
     console.log('✅ Financial record created:', timestamp);
     // ============================================
-// 5️⃣ UPDATE TENANT PAYMENT HISTORY (payments array)
-// ============================================
+    const paymentEntry = {
+      paymentId: timestamp,        // SAME ID used as doc ID in financial_records
+      amount,
+      paymentMonth,
+      allocation: {
+        deposit: allocatedToDeposit,
+        rent: allocatedToRent,
+        utilities: allocatedToUtilities
+      },
+      date: timestamp
+    };
 
-const paymentEntry = {
-  paymentId: timestamp,        // SAME ID used as doc ID in financial_records
-  amount,
-  paymentMonth,
-  allocation: {
-    deposit: allocatedToDeposit,
-    rent: allocatedToRent,
-    utilities: allocatedToUtilities
-  },
-  date: timestamp
-};
+    // Append to payments[] array and update tracking fields
+    await updateDoc(doc(db, 'tenants', tenant.id), {
+      payments: arrayUnion(paymentEntry),
+      monthlyPaymentTracking: financialRecord.monthlyTracking,
+      financialSummary: {
+        totalPaid: (tenant.financialSummary?.totalPaid || 0) + amount,
+        arrears: (tenant.financialSummary?.arrears || 0) - (allocatedToDeposit + allocatedToRent + allocatedToUtilities),
+        balance: (tenant.financialSummary?.balance || 0) + amount
+      },
+      arrears: Math.max(0, (tenant.arrears || 0) - (allocatedToDeposit + allocatedToRent + allocatedToUtilities)),
+      updatedAt: timestamp
+    });
 
-// Append to payments[] array
-await updateDoc(doc(db, 'tenants', tenant.id), {
-  payments: arrayUnion(paymentEntry)
-});
 
-    
 
- 
-    
+
+
     // ============================================
     // 6️⃣ SEND SMS CONFIRMATION
     // ============================================
-    
+
     try {
-      const smsBreakdown = [];
-      if (allocatedToDeposit > 0) {
-        smsBreakdown.push(`Deposit: KSh ${allocatedToDeposit.toLocaleString()}`);
-      }
-      if (allocatedToRent > 0) {
-        smsBreakdown.push(`Rent: KSh ${allocatedToRent.toLocaleString()}`);
-      }
-      if (allocatedToUtilities > 0) {
-        smsBreakdown.push(`Utilities: KSh ${allocatedToUtilities.toLocaleString()}`);
-      }
-      
-      const smsMessage = `Payment received! KSh ${amount.toLocaleString()} allocated:\n${smsBreakdown.join('\n')}\n\nRemaining: KSh ${remainingTotal.toLocaleString()}\nStatus: ${monthlyStatus.toUpperCase()}\n\nThank you, ${tenant.name}!`;
-      
+      const smsMessage = SMSService.generatePaymentConfirmationSMS(
+        { unitCode: tenant.unitCode, name: tenant.name },
+        amount,
+        transactionId,
+        { remainingAmount: remainingTotal, status: monthlyStatus }
+      );
+
       await SMSService.sendSMS(tenant.phone, smsMessage, tenant.id, transactionId);
       console.log(`📱 SMS sent to ${tenant.phone}`);
     } catch (smsError) {
       console.error('⚠️ SMS failed:', smsError.message);
     }
-    
+
     // ============================================
     // ✅ RETURN SUCCESS
     // ============================================
-    
+
     console.log('✅ Payment processed successfully');
     console.log(`   Transaction: ${transactionId}`);
     console.log(`   Tenant: ${tenant.name}`);
     console.log(`   Month: ${paymentMonth}`);
     console.log(`   Status: ${monthlyStatus}`);
-    
+
     return {
       success: true,
       data: {
@@ -435,16 +460,49 @@ await updateDoc(doc(db, 'tenants', tenant.id), {
         matchStrategy
       }
     };
-    
   } catch (error) {
     console.error('❌ Error processing payment:', error);
     return { success: false, error: error.message };
   }
 };
 
-module.exports = { 
-  parseMpesaWebhook, 
+/**
+ * Reset monthly payment tracking for all tenants
+ * Called by cron job on the 1st of every month
+ */
+const resetMonthlyPaymentTracking = async () => {
+  try {
+    console.log('🔄 Resetting monthly payment tracking for all tenants...');
+    const tenantsSnapshot = await getDocs(collection(db, 'tenants'));
+    const currentMonth = getCurrentMonth();
+    let resetCount = 0;
+
+    const tenantService = require('./services/tenantService');
+
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenant = tenantDoc.data();
+      const tracking = tenant.monthlyPaymentTracking;
+
+      // Only reset if month has changed or tracking is missing
+      if (!tracking || tracking.month !== currentMonth) {
+        console.log(`   - Resetting tracking for: ${tenant.name}`);
+        // We call getPaymentStatus which has the initialization & carry-over logic
+        await tenantService.getPaymentStatus(tenantDoc.id);
+        resetCount++;
+      }
+    }
+
+    return { success: true, resetCount };
+  } catch (error) {
+    console.error('❌ Reset failed:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+module.exports = {
+  parseMpesaWebhook,
   processRentalPayment,
+  resetMonthlyPaymentTracking,
   getCurrentMonth,
   getPaymentMonth,
   normalizePhoneNumber

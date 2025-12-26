@@ -26,10 +26,12 @@ class SMSService {
    * @param {Object} tenantData - Tenant information
    * @param {string} tenantData.name - Tenant's full name
    * @param {string} tenantData.unitCode - Unit ID
+   * @param {string} tenantData.unitName - Unit name (preferred over unitCode)
    * @param {number} tenantData.rentAmount - Monthly rent amount
    * @param {number} tenantData.utilityFees - Total utility fees
    * @param {number} tenantData.totalAmount - Total monthly charges
    * @param {number} tenantData.depositAmount - Security deposit amount
+   * @param {string} tenantData.waterMeterType - Water meter type ('single' or 'individual')
    * @param {Object} paymentInfo - Payment details
    * @param {string} paymentInfo.paybill - Paybill number
    * @param {string} paymentInfo.accountNumber - Account number for payment
@@ -38,16 +40,20 @@ class SMSService {
   generateTenantWelcomeSMS(tenantData, paymentInfo) {
     console.log('🏠 Generating tenant welcome SMS...');
     console.log(`   - Tenant Name: ${tenantData.name}`);
-    console.log(`   - Unit Code: ${tenantData.unitCode}`);
+    console.log(`   - Unit: ${tenantData.unitName || tenantData.unitCode}`);
     console.log(`   - Rent Amount: ${tenantData.rentAmount}`);
     console.log(`   - Utility Fees: ${tenantData.utilityFees || 0}`);
     console.log(`   - Total Monthly: ${tenantData.totalAmount}`);
     console.log(`   - Deposit Amount: ${tenantData.depositAmount || 0}`);
+    console.log(`   - Water Meter Type: ${tenantData.waterMeterType || 'single'}`);
 
     const rentAmount = tenantData.rentAmount || 0;
-    const utilityFees = tenantData.utilityFees || 0;
-    const totalAmount = tenantData.totalAmount || rentAmount;
+    const waterMeterType = tenantData.waterMeterType || 'single';
+    // For individual water meters, exclude only water fees, keep garbage/electricity/other fees
+    const utilityFees = waterMeterType === 'individual' ? (tenantData.nonWaterUtilityFees || 0) : (tenantData.utilityFees || 0);
+    const totalAmount = waterMeterType === 'individual' ? (rentAmount + (tenantData.nonWaterUtilityFees || 0)) : (tenantData.totalAmount || rentAmount);
     const depositAmount = tenantData.depositAmount || 0;
+    const unitDisplay = tenantData.unitName || tenantData.unitCode;
 
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
@@ -64,31 +70,31 @@ class SMSService {
       // With deposit
       if (utilityFees > 0) {
         // Deposit + Utilities
-        message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode}. ` +
-                  `Rent ${formatAmount(rentAmount)} + Utils ${formatAmount(utilityFees)} = ${formatAmount(totalAmount)}/mo. ` +
-                  `DEPOSIT: ${formatAmount(depositAmount)} (one-time). ` +
-                  `1st Payment: ${formatAmount(totalAmount + depositAmount)}. ` +
-                  `Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Call 0113689071`;
+        message = `Welcome ${tenantData.name}! Unit ${unitDisplay}. ` +
+          `Rent ${formatAmount(rentAmount)} + Utils ${formatAmount(utilityFees)} = ${formatAmount(totalAmount)}/mo. ` +
+          `DEPOSIT: ${formatAmount(depositAmount)} (one-time). ` +
+          `1st Payment: ${formatAmount(totalAmount + depositAmount)}. ` +
+          `Paybill ${paybill}, Acc ${accountNumber}. Due 1st.`;
       } else {
         // Deposit only, no utilities
-        message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode}. ` +
-                  `Rent KSH ${formatAmount(totalAmount)}/mo. ` +
-                  `DEPOSIT: ${formatAmount(depositAmount)} (one-time, refundable). ` +
-                  `1st Payment: ${formatAmount(totalAmount + depositAmount)}. ` +
-                  `Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Info: 0113689071`;
+        message = `Welcome ${tenantData.name}! Unit ${unitDisplay}. ` +
+          `Rent KSH ${formatAmount(totalAmount)}/mo. ` +
+          `DEPOSIT: ${formatAmount(depositAmount)} (one-time, refundable). ` +
+          `1st Payment: ${formatAmount(totalAmount + depositAmount)}. ` +
+          `Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st.`;
       }
     } else {
       // No deposit
       if (utilityFees > 0) {
         // Utilities only, no deposit
-        message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode}. ` +
-                  `Rent ${formatAmount(rentAmount)} + Utils ${formatAmount(utilityFees)} = ${formatAmount(totalAmount)}/mo. ` +
-                  `Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Call 0113689071`;
+        message = `Welcome ${tenantData.name}! Unit ${unitDisplay}. ` +
+          `Rent ${formatAmount(rentAmount)} + Utils ${formatAmount(utilityFees)} = ${formatAmount(totalAmount)}/mo. ` +
+          `Paybill ${paybill}, Acc ${accountNumber}. Due 1st.`;
       } else {
         // Simple message - no utilities, no deposit
-        message = `Welcome ${tenantData.name}! Unit ${tenantData.unitCode} ready. ` +
-                  `Rent KSH ${formatAmount(totalAmount)}/month. ` +
-                  `Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st. Info: 0113689071`;
+        message = `Welcome ${tenantData.name}! Unit ${unitDisplay} ready. ` +
+          `Rent KSH ${formatAmount(totalAmount)}/month. ` +
+          `Pay: Paybill ${paybill}, Acc ${accountNumber}. Due 1st.`;
       }
     }
 
@@ -114,20 +120,19 @@ class SMSService {
    */
   generateDepositReminderSMS(tenantData, paymentInfo) {
     console.log('💰 Generating deposit reminder SMS...');
-    
+
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
       maximumFractionDigits: 0
     }).format(amount);
 
     const message = `Hello ${tenantData.name}, ` +
-                    `Outstanding deposit for Unit ${tenantData.unitCode}: KSH ${formatAmount(tenantData.depositAmount)}. ` +
-                    `Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}. ` +
-                    `Contact: 0113689071`;
+      `Outstanding deposit for Unit ${tenantData.unitCode}: KSH ${formatAmount(tenantData.depositAmount)}. ` +
+      `Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}.`;
 
     console.log('✅ Deposit reminder SMS generated');
     console.log(`   - Message length: ${message.length} characters`);
-    
+
     return message;
   }
 
@@ -142,55 +147,84 @@ class SMSService {
    */
   generateDepositConfirmationSMS(tenantData, paidDate) {
     console.log('✅ Generating deposit confirmation SMS...');
-    
+
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
       maximumFractionDigits: 0
     }).format(amount);
 
     const message = `Thank you ${tenantData.name}! ` +
-                    `Deposit CONFIRMED for Unit ${tenantData.unitCode}. ` +
-                    `Amount: KSH ${formatAmount(tenantData.depositAmount)}. ` +
-                    `Date: ${paidDate}. ` +
-                    `Refundable at lease end. Welcome home!`;
+      `Deposit CONFIRMED for Unit ${tenantData.unitCode}. ` +
+      `Amount: KSH ${formatAmount(tenantData.depositAmount)}. ` +
+      `Date: ${paidDate}. ` +
+      `Refundable at lease end. Welcome home!`;
 
     console.log('✅ Deposit confirmation SMS generated');
     console.log(`   - Message length: ${message.length} characters`);
-    
+
     return message;
   }
 
   /**
-   * Generate rent reminder SMS with deposit status
-   * @param {Object} tenantData - Tenant information
-   * @param {Object} paymentInfo - Payment details
-   * @param {boolean} hasOutstandingDeposit - Whether deposit is still pending
+   * Generate rent reminder/invoice SMS with deposit status
+   * @param {Object} debt - Debt information
+   * @param {string} debt.debtCode - Unit ID
+   * @param {Object} debt.storeOwner - Tenant info (name)
+   * @param {number} debt.remainingAmount - Total amount due
+   * @param {Object} debt.breakdown - Optional breakdown of charges {rent, water, utilities, deposit}
+   * @param {Object} paymentInfo - Payment credentials
    * @returns {string} Rent reminder message
    */
-  generateRentReminderSMS(tenantData, paymentInfo, hasOutstandingDeposit = false) {
-    console.log('📅 Generating rent reminder SMS...');
-    
+  generateInvoiceSMS(debt, paymentInfo) {
+    console.log('📅 Generating invoice/reminder SMS...');
+
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
       maximumFractionDigits: 0
     }).format(amount);
 
-    let message = `Hello ${tenantData.name}, ` +
-                  `Rent reminder for Unit ${tenantData.unitCode}. ` +
-                  `Amount due: KSH ${formatAmount(tenantData.totalAmount)}. `;
+    const unitDisplay = debt.debtCode;
+    const name = debt.storeOwner?.name || 'Tenant';
+    const totalAmount = debt.remainingAmount || 0;
+    const breakdown = debt.breakdown || {};
 
-    if (hasOutstandingDeposit) {
-      message += `PLUS Outstanding deposit: ${formatAmount(tenantData.depositAmount)}. `;
+    let message = `Hello ${name}, ` +
+      `Reminder for Unit ${unitDisplay}. ` +
+      `Total due: KSH ${formatAmount(totalAmount)}. `;
+
+    if (breakdown.rent > 0 || breakdown.water > 0 || breakdown.utilities > 0) {
+      const parts = [];
+      if (breakdown.rent > 0) parts.push(`Rent: ${formatAmount(breakdown.rent)}`);
+      if (breakdown.water > 0) parts.push(`Water: ${formatAmount(breakdown.water)}`);
+      if (breakdown.utilities > 0) parts.push(`Utils: ${formatAmount(breakdown.utilities)}`);
+      if (breakdown.deposit > 0) parts.push(`Deposit: ${formatAmount(breakdown.deposit)}`);
+
+      if (parts.length > 0) {
+        message += `(Breakdown: ${parts.join(', ')}). `;
+      }
     }
 
-    message += `Due: 1st. Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}. ` +
-               `Call 0113689071`;
+    message += `Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}. Due soon.`;
 
-    console.log('✅ Rent reminder SMS generated');
-    console.log(`   - Message length: ${message.length} characters`);
-    console.log(`   - Has outstanding deposit: ${hasOutstandingDeposit}`);
-    
+    console.log('✅ Invoice SMS generated');
     return message;
+  }
+
+  /**
+   * Alias for backward compatibility or thematic consistency
+   */
+  generateRentReminderSMS(tenantData, paymentInfo, hasOutstandingDeposit = false) {
+    const debt = {
+      debtCode: tenantData.unitName || tenantData.unitCode,
+      storeOwner: { name: tenantData.name },
+      remainingAmount: tenantData.totalAmount + (hasOutstandingDeposit ? tenantData.depositAmount : 0),
+      breakdown: {
+        rent: tenantData.rentAmount,
+        utilities: tenantData.utilityFees,
+        deposit: hasOutstandingDeposit ? tenantData.depositAmount : 0
+      }
+    };
+    return this.generateInvoiceSMS(debt, paymentInfo);
   }
 
   /**
@@ -203,18 +237,18 @@ class SMSService {
    */
   generateMoveOutSMS(tenantData, refundAmount, deductions = 0, reason = '') {
     console.log('🚪 Generating move-out SMS...');
-    
+
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
       maximumFractionDigits: 0
     }).format(amount);
 
     let message = `Hello ${tenantData.name}, ` +
-                  `Move-out confirmed for Unit ${tenantData.unitCode}. `;
+      `Move-out confirmed for Unit ${tenantData.unitCode}. `;
 
     if (deductions > 0) {
       message += `Deposit: ${formatAmount(tenantData.depositAmount)}. ` +
-                 `Deductions: ${formatAmount(deductions)}`;
+        `Deductions: ${formatAmount(deductions)}`;
       if (reason) {
         message += ` (${reason})`;
       }
@@ -227,7 +261,7 @@ class SMSService {
 
     console.log('✅ Move-out SMS generated');
     console.log(`   - Message length: ${message.length} characters`);
-    
+
     return message;
   }
 
@@ -235,36 +269,28 @@ class SMSService {
    * Generate payment confirmation SMS
    * @param {Object} tenantData - Tenant information
    * @param {number} amount - Amount paid
-   * @param {string} type - Payment type ('rent', 'deposit', 'utilities')
    * @param {string} referenceNumber - Transaction reference
+   * @param {Object} resultData - Resulting financial state {remainingAmount, status}
    * @returns {string} Payment confirmation message
    */
-  generatePaymentConfirmationSMS(tenantData, amount, type, referenceNumber) {
+  generatePaymentConfirmationSMS(tenantData, amount, referenceNumber, resultData = {}) {
     console.log('💳 Generating payment confirmation SMS...');
-    
+
     const formatAmount = (amount) => new Intl.NumberFormat('en-KE', {
       style: 'decimal',
       maximumFractionDigits: 0
     }).format(amount);
 
-    const typeMap = {
-      'rent': 'Rent',
-      'deposit': 'Deposit',
-      'utilities': 'Utilities',
-      'other': 'Payment'
-    };
+    const remaining = resultData.remainingAmount || 0;
+    const status = resultData.status || 'Received';
 
-    const paymentType = typeMap[type] || 'Payment';
-
-    const message = `Payment received! ` +
-                    `${paymentType}: KSH ${formatAmount(amount)}. ` +
-                    `Unit: ${tenantData.unitCode}. ` +
-                    `Ref: ${referenceNumber}. ` +
-                    `Thank you ${tenantData.name}!`;
+    const message = `Payment Received! KSH ${formatAmount(amount)}. ` +
+      `Ref: ${referenceNumber}. ` +
+      `Unit: ${tenantData.unitCode}. ` +
+      `Remaining: ${formatAmount(remaining)} (${status.toUpperCase()}). ` +
+      `Thank you ${tenantData.name}!`;
 
     console.log('✅ Payment confirmation SMS generated');
-    console.log(`   - Message length: ${message.length} characters`);
-    
     return message;
   }
 
@@ -284,7 +310,7 @@ class SMSService {
 
     try {
       const formattedPhone = to.startsWith('+254') ? to.replace('+254', '254') :
-                           to.startsWith('0') ? '254' + to.substring(1) : to;
+        to.startsWith('0') ? '254' + to.substring(1) : to;
       const formattedMessage = encodeURIComponent(message.trim());
 
       if (message.length > 160) {

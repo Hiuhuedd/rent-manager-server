@@ -24,6 +24,7 @@ class SettingsService {
 
             const data = settingsSnap.data();
             return {
+                agencyName: data.agencyName || 'RentManager Agency',
                 paybill: data.paybill || '522533',
                 paymentMethod: data.paymentMethod || 'mpesa',
                 customerServiceNumber: data.customerServiceNumber || '',

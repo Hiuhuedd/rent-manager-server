@@ -30,7 +30,6 @@ class ReminderService {
 
             // Fetch settings for customer service number
             const settings = await settingsService.getSettings();
-            const customerServiceNumber = settings.customerServiceNumber || '0113689071';
             const paybill = settings.paybill || '522533';
 
             for (const tenantDoc of tenantsSnap.docs) {
@@ -44,7 +43,7 @@ class ReminderService {
 
                 try {
                     // Generate reminder SMS
-                    const message = this.generateReminderMessage(tenant, paybill, customerServiceNumber);
+                    const message = this.generateReminderMessage(tenant, paybill);
 
                     // Send SMS
                     await smsService.sendSMS(
@@ -84,10 +83,9 @@ class ReminderService {
      * Generate reminder message for a tenant
      * @param {Object} tenant - Tenant data
      * @param {string} paybill - Paybill number
-     * @param {string} customerServiceNumber - Support number
      * @returns {string} SMS message
      */
-    generateReminderMessage(tenant, paybill, customerServiceNumber) {
+    generateReminderMessage(tenant, paybill) {
         const name = tenant.name || 'Tenant';
         const unitCode = tenant.unitCode || '';
         const rentAmount = tenant.rentAmount || 0;
@@ -99,7 +97,7 @@ class ReminderService {
         // Use arrears if available, otherwise fall back to rent amount
         const amountDue = arrears > 0 ? arrears : rentAmount;
 
-        return `Hi ${name}, this is a reminder that your rent for ${unitCode} (KES ${amountDue.toLocaleString()}) is due on the 1st. Pay via Paybill ${paybill}, Acc ${accountNumber}. Call ${customerServiceNumber} for assistance.`;
+        return `Hi ${name}, this is a reminder that your rent for ${unitCode} (KES ${amountDue.toLocaleString()}) is due on the 1st. Pay via Paybill ${paybill}, Acc ${accountNumber}.`;
     }
 
     /**

@@ -2,7 +2,7 @@
 // FILE: src/services/paymentService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { collection, getDocs, query, where } = require('firebase/firestore');
+const { collection, getDocs, getDoc, doc, query, where } = require('firebase/firestore');
 const { getCurrentMonth } = require('../utils/dateHelper');
 const { PAYMENT_STATUS } = require('../config/constants');
 const smsService = require('./smsService');
@@ -248,11 +248,47 @@ class PaymentService {
 
       const tenantPayments = paymentsByTenant.get(tenant.id) || [];
 
+      // Get property to check water meter type
+      const unitProperty = propertiesMap.get(unit.propertyId);
+      const waterMeterType = unitProperty?.waterMeterSettings?.meterType || 'single';
+
       // Calculate expected amounts for this month
       const rent = parseFloat(unit.rentAmount) || 0;
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+      const fixedWater = parseFloat(unitProperty?.waterMeterSettings?.fixedWaterBill);
+      let water = !isNaN(fixedWater) ? fixedWater : (parseFloat(unit.utilityFees?.waterBill) || 0);
       const deposit = parseFloat(unit.depositAmount) || 0;
+
+      // For properties with individual meters, fetch water bill from water_bills collection
+      if (waterMeterType === 'individual') {
+        try {
+          const waterBillId = `${unit.propertyId}_${targetMonth}`;
+          const waterBillRef = doc(db, 'water_bills', waterBillId);
+          const waterBillSnap = await getDoc(waterBillRef);
+
+          console.log(`[REPORT] Checking water bill doc: ${waterBillId} | Found: ${waterBillSnap.exists()}`);
+
+          if (waterBillSnap.exists()) {
+            const waterBillData = waterBillSnap.data();
+
+            // Robust matching for unit ID
+            const targetUnitId = String(unit.unitId || unit.code || '').trim();
+            const unitBill = waterBillData.bills?.find(b =>
+              String(b.unitId).trim() === targetUnitId ||
+              String(b.unitCode).trim() === targetUnitId
+            );
+
+            if (unitBill) {
+              water = parseFloat(unitBill.totalBill) || 0;
+              console.log(`[REPORT] Matched water bill for ${targetUnitId}: ${water}`);
+            } else {
+              console.warn(`[REPORT] No water bill found for unit ${targetUnitId} in ${waterBillId}. Bills:`, JSON.stringify(waterBillData.bills));
+            }
+          }
+        } catch (waterBillError) {
+          console.warn(`⚠️ [REPORT] Failed to fetch water bill for unit ${unit.unitId}:`, waterBillError.message);
+        }
+      }
 
       // Check if deposit should be included this month
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
@@ -267,18 +303,33 @@ class PaymentService {
 
       // Get tracking data from most recent payment or calculate fresh
       let tracking;
+      const liveExpected = totalExpected;
+
       if (tenantPayments.length > 0) {
         // Sort by timestamp descending
         const sortedPayments = tenantPayments.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
-        tracking = sortedPayments[0].monthlyTracking;
+        tracking = { ...sortedPayments[0].monthlyTracking };
+
+        // IMPORTANT: Override the potentially stale expectedTotal with live calculation
+        tracking.expectedTotal = liveExpected;
+
+        // Recalculate status if it was 'paid' but now we have a higher expected total (e.g. new water bill)
+        if (tracking.status === PAYMENT_STATUS.PAID && (tracking.totalPaid || 0) < liveExpected) {
+          tracking.status = PAYMENT_STATUS.PARTIAL;
+          tracking.remainingAmount = liveExpected - (tracking.totalPaid || 0);
+        } else if (tracking.status === PAYMENT_STATUS.UNPAID && (tracking.totalPaid || 0) > 0) {
+          // Safety check
+          tracking.status = PAYMENT_STATUS.PARTIAL;
+          tracking.remainingAmount = liveExpected - (tracking.totalPaid || 0);
+        }
       } else {
         // No payments for this month
         tracking = {
-          expectedTotal: totalExpected,
+          expectedTotal: liveExpected,
           totalPaid: 0,
-          remainingAmount: totalExpected,
+          remainingAmount: liveExpected,
           status: PAYMENT_STATUS.UNPAID,
           breakdown: {
             deposit: {
@@ -300,10 +351,15 @@ class PaymentService {
         };
       }
 
+      // Calculate total excess from all payments this month
+      const totalExcess = tenantPayments.reduce((sum, p) => sum + (p.allocation?.excess || 0), 0);
+
+      const property = propertiesMap.get(tenant.propertyId);
+
       report.summary.totalTenants++;
-      report.summary.totalExpected += tracking.expectedTotal || 0;
+      report.summary.totalExpected += liveExpected;
       report.summary.totalReceived += tracking.totalPaid || 0;
-      report.summary.totalRemaining += tracking.remainingAmount || 0;
+      report.summary.totalRemaining += Math.max(0, liveExpected - (tracking.totalPaid || 0));
 
       switch (tracking.status) {
         case PAYMENT_STATUS.PAID:
@@ -317,17 +373,26 @@ class PaymentService {
           break;
       }
 
-      const property = propertiesMap.get(tenant.propertyId);
+      // Calculate actual total paid (including excess)
+      const actualTotalPaid = (tracking.totalPaid || 0) + totalExcess;
+
+      // Cap paid amount at expected for display purposes
+      const displayPaid = Math.min(actualTotalPaid, tracking.expectedTotal || 0);
+
+      // Calculate remaining (should never be negative)
+      const displayRemaining = Math.max(0, (tracking.expectedTotal || 0) - displayPaid);
 
       report.tenants.push({
         tenantId: tenant.id,
         name: tenant.name,
         unitCode: tenant.unitCode,
+        unitName: unit.unitName || tenant.unitCode,
         propertyName: property?.name || tenant.propertyDetails?.propertyName || 'N/A',
         status: tracking.status || PAYMENT_STATUS.UNPAID,
         expected: tracking.expectedTotal || 0,
-        paid: tracking.totalPaid || 0,
-        remaining: tracking.remainingAmount || 0,
+        paid: displayPaid,  // Capped at expected
+        remaining: displayRemaining,  // Never negative
+        excess: totalExcess,  // Tracked separately
         breakdown: {
           deposit: tracking.breakdown?.deposit?.paid || 0,
           rent: tracking.breakdown?.rent?.paid || 0,
@@ -373,6 +438,11 @@ class PaymentService {
       unitsMap.set(unit.unitId || unit.code, unit);
     });
 
+    const propertiesSnapshot = await getDocs(collection(db, 'properties'));
+    const allProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const propertiesMap = new Map();
+    allProperties.forEach(p => propertiesMap.set(p.id, p));
+
     // Get financial records for the target month
     const financialRecordsQuery = query(
       collection(db, 'financial_records'),
@@ -399,9 +469,13 @@ class PaymentService {
       const tenantPayments = paymentsByTenant.get(tenant.id) || [];
 
       // Calculate expected amounts
+      const unitProperty = propertiesMap.get(unit.propertyId);
+      const waterMeterType = unitProperty?.waterMeterSettings?.meterType || 'single';
+
       const rent = parseFloat(unit.rentAmount) || 0;
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
-      const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+      const fixedWater = parseFloat(unitProperty?.waterMeterSettings?.fixedWaterBill);
+      let water = !isNaN(fixedWater) ? fixedWater : (parseFloat(unit.utilityFees?.waterBill) || 0);
       const deposit = parseFloat(unit.depositAmount) || 0;
 
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
@@ -414,24 +488,31 @@ class PaymentService {
       const monthlyRent = rent + garbage + water;
       const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
 
+      const liveExpected = totalExpected;
       let tracking;
       if (tenantPayments.length > 0) {
         const sortedPayments = tenantPayments.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
-        tracking = sortedPayments[0].monthlyTracking;
+        tracking = { ...sortedPayments[0].monthlyTracking };
+        tracking.expectedTotal = liveExpected;
+
+        // Recalculate status for overdue determination
+        if (tracking.status === PAYMENT_STATUS.PAID && (tracking.totalPaid || 0) < liveExpected) {
+          tracking.status = PAYMENT_STATUS.PARTIAL;
+          tracking.remainingAmount = liveExpected - (tracking.totalPaid || 0);
+        }
       } else {
         tracking = {
-          expectedTotal: totalExpected,
+          expectedTotal: liveExpected,
           totalPaid: 0,
-          remainingAmount: totalExpected,
+          remainingAmount: liveExpected,
           status: PAYMENT_STATUS.UNPAID
         };
       }
 
       const tenantArrears = tenant.financialSummary?.arrears || tenant.arrears || 0;
 
-      // Include tenant if they have unpaid current month OR existing arrears
       if (tracking.status !== PAYMENT_STATUS.PAID || tenantArrears > 0) {
         overdueList.push({
           tenantId: tenant.id,
@@ -439,9 +520,9 @@ class PaymentService {
           phone: tenant.phone,
           unitCode: tenant.unitCode,
           propertyName: tenant.propertyDetails?.propertyName || 'N/A',
-          expectedAmount: tracking.expectedTotal || 0,
+          expectedAmount: liveExpected,
           paidAmount: tracking.totalPaid || 0,
-          remainingAmount: tracking.remainingAmount || 0,
+          remainingAmount: Math.max(0, liveExpected - (tracking.totalPaid || 0)),
           status: tracking.status || PAYMENT_STATUS.UNPAID,
           arrears: tenantArrears,
           moveInDate: tenant.moveInDate,

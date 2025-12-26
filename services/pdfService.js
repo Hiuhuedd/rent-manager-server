@@ -23,6 +23,15 @@ class PdfService {
 
             const page = await browser.newPage();
 
+            // Set viewport to high resolution to avoid any rasterization blur
+            await page.setViewport({
+                width: 1240,
+                height: 1754, // A4 pixel size approx at 150dpi
+                deviceScaleFactor: 2,
+            });
+
+            await page.emulateMediaType('screen');
+
             // Set content
             // waitUntil: 'networkidle0' ensures fonts/images load
             await page.setContent(htmlContent, {

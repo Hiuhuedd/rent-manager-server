@@ -112,6 +112,36 @@ class StatsService {
         });
       }
 
+      // === Fetch water bills for this property if it has individual meters ===
+      const waterMeterType = propData.waterMeterSettings?.meterType || 'single';
+      let waterBillsMap = new Map();
+
+      if (waterMeterType === 'individual') {
+        try {
+          const waterBillId = `${propDoc.id}_${monthKey}`;
+          const waterBillRef = doc(db, 'water_bills', waterBillId);
+          const waterBillSnap = await getDoc(waterBillRef);
+
+          console.log(`[STATS] Checking water bill document: ${waterBillId} | Found: ${waterBillSnap.exists()}`);
+
+          if (waterBillSnap.exists()) {
+            const waterBillData = waterBillSnap.data();
+            console.log(`[STATS] Water bill data for ${waterBillId}:`, JSON.stringify(waterBillData.bills || []));
+
+            waterBillData.bills?.forEach(bill => {
+              const uid = String(bill.unitId).trim();
+              const ucode = String(bill.unitCode || '').trim();
+              const amount = parseFloat(bill.totalBill) || 0;
+              waterBillsMap.set(uid, amount);
+              if (ucode) waterBillsMap.set(ucode, amount);
+              console.log(`[STATS] Mapped water bill - Unit: ${uid}/${ucode}, Amount: ${amount}`);
+            });
+          }
+        } catch (waterBillError) {
+          console.warn(`[STATS] Failed to fetch water bills:`, waterBillError.message);
+        }
+      }
+
       // === Process each unit ===
       for (const unitSnap of historicalUnits) {
         const unitData = unitSnap.data();
@@ -127,13 +157,34 @@ class StatsService {
 
         const rent = parseFloat(unitData.rentAmount) || 0;
         const garbage = parseFloat(unitData.utilityFees?.garbageFee) || 0;
-        const water = parseFloat(unitData.utilityFees?.waterBill) || 0;
-        const deposit = parseFloat(unitData.depositAmount) || 0;
+        let water = parseFloat(unitData.utilityFees?.waterBill) || 0;
+
+        // For properties with individual meters, use water bill from collection
+        let waterRevenue = 0;
+
+        if (waterMeterType === 'individual') {
+          const unitId = String(unitData.unitId || '').trim();
+          const docId = String(unitSnap.id).trim();
+
+          if (unitId && waterBillsMap.has(unitId)) {
+            waterRevenue = waterBillsMap.get(unitId);
+          } else if (waterBillsMap.has(docId)) {
+            waterRevenue = waterBillsMap.get(docId);
+          } else {
+            console.log(`[STATS] No water bill match for unit ${unitId} (doc: ${docId}) in ${Array.from(waterBillsMap.keys())}`);
+          }
+          water = waterRevenue;
+        } else {
+          const fixedWaterBill = parseFloat(propData.waterMeterSettings?.fixedWaterBill);
+          waterRevenue = !isNaN(fixedWaterBill) ? fixedWaterBill : water;
+        }
 
         if (wasOccupiedInMonth) {
           occupiedUnits++;
           const movedInThisMonth = moveInDate && moveInDate >= monthStart && moveInDate < monthEnd;
-          expectedMonthlyRevenue += rent + garbage + water + (movedInThisMonth ? deposit : 0);
+          const unitTotal = rent + garbage + waterRevenue + (movedInThisMonth ? (parseFloat(unitData.depositAmount) || 0) : 0);
+          expectedMonthlyRevenue += unitTotal;
+          console.log(`[STATS] Unit ${unitData.unitId} expected: ${unitTotal} (Rent: ${rent}, G: ${garbage}, W: ${waterRevenue})`);
         } else {
           vacantUnits++;
         }

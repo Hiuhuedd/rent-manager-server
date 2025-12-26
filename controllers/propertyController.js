@@ -42,6 +42,12 @@ class PropertyController {
     res.json(createSuccessResponse(result, 'Property updated successfully'));
   }
 
+  async updateUnit(req, res) {
+    const { id, unitId } = req.params;
+    const result = await propertyService.updateUnit(id, unitId, req.body);
+    res.json(createSuccessResponse(result, 'Unit updated successfully'));
+  }
+
   async deleteProperty(req, res) {
     try {
       await propertyService.deleteProperty(req.params.id);
