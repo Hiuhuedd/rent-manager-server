@@ -21,6 +21,25 @@ class ReportController {
     res.json(createSuccessResponse(report));
   }
 
+  getTenantStatement = async (req, res) => {
+    const { tenantId } = req.params;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tenant ID is required'
+      });
+    }
+
+    try {
+      const statement = await reportService.generateTenantStatement(tenantId);
+      res.json(createSuccessResponse(statement));
+    } catch (error) {
+      console.error('Error in getTenantStatement:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
   downloadReportPdf = async (req, res) => {
     const { propertyId, month } = req.params;
 

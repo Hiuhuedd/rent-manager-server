@@ -340,40 +340,88 @@ class ReportService {
         const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
         if (!tenantSnap.exists()) throw new Error('Tenant not found');
         const tenant = tenantSnap.data();
+        console.log(`[ReportService] Tenant Data:`, { name: tenant.name, unitCode: tenant.unitCode, propertyId: tenant.propertyId });
 
         // 2. Fetch Unit & Property
         const unitSnap = await getDocs(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)));
         const unit = unitSnap.empty ? {} : unitSnap.docs[0].data();
+        console.log(`[ReportService] Unit found:`, !unitSnap.empty);
 
         const propertySnap = await getDoc(doc(db, 'properties', tenant.propertyId));
         const property = propertySnap.exists() ? propertySnap.data() : { propertyName: 'Unknown Property' };
 
         const agencySettings = await settingsService.getSettings();
 
-        // 3. Fetch All Payments (Payment Logs or Financial Records)
-        // We prefer 'paymentLogs' for full history including timestamps
-        const logsQuery = query(
-            collection(db, 'paymentLogs'),
-            where('tenantId', '==', tenantId)
-        );
-        const logsSnap = await getDocs(logsQuery);
+        // 3. Fetch All Payments - Try multiple sources
+        let allTransactions = [];
 
-        let allTransactions = logsSnap.docs.map(d => ({
-            id: d.id,
-            ...d.data(),
-            date: d.data().createdAt || d.data().paymentDate, // Fallback
-            isPayment: true
-        }));
+        // STRATEGY 1: Try paymentLogs collection
+        try {
+            const logsQuery = query(
+                collection(db, 'paymentLogs'),
+                where('tenantId', '==', tenantId)
+            );
+            const logsSnap = await getDocs(logsQuery);
+            console.log(`[ReportService] PaymentLogs found: ${logsSnap.docs.length}`);
+
+            const paymentLogs = logsSnap.docs.map(d => ({
+                id: d.id,
+                ...d.data(),
+                date: d.data().createdAt || d.data().paymentDate || d.data().timestamp,
+                type: 'Payment',
+                source: 'paymentLogs'
+            }));
+            allTransactions.push(...paymentLogs);
+        } catch (err) {
+            console.warn(`[ReportService] Error fetching paymentLogs:`, err.message);
+        }
+
+        // STRATEGY 2: Fallback to financial_records
+        try {
+            const financialQuery = query(
+                collection(db, 'financial_records'),
+                where('tenantId', '==', tenantId)
+            );
+            const financialSnap = await getDocs(financialQuery);
+            console.log(`[ReportService] Financial_records found: ${financialSnap.docs.length}`);
+
+            const financialRecords = financialSnap.docs.map(d => ({
+                id: d.id,
+                ...d.data(),
+                date: d.data().timestamp || d.data().paymentDate || d.data().createdAt,
+                type: d.data().type || 'Payment',
+                source: 'financial_records'
+            }));
+
+            // Merge and deduplicate by transaction code or mpesa receipt
+            financialRecords.forEach(fr => {
+                const isDuplicate = allTransactions.some(t =>
+                    (t.transactionCode && t.transactionCode === fr.transactionCode) ||
+                    (t.mpesaReceiptNumber && t.mpesaReceiptNumber === fr.mpesaReceiptNumber)
+                );
+                if (!isDuplicate) {
+                    allTransactions.push(fr);
+                }
+            });
+        } catch (err) {
+            console.warn(`[ReportService] Error fetching financial_records:`, err.message);
+        }
+
+        console.log(`[ReportService] Total transactions collected: ${allTransactions.length}`);
 
         // Sort by date descending
-        allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+        allTransactions.sort((a, b) => {
+            const dateA = a.date ? (a.date.toDate ? a.date.toDate() : new Date(a.date)) : new Date(0);
+            const dateB = b.date ? (b.date.toDate ? b.date.toDate() : new Date(b.date)) : new Date(0);
+            return dateB - dateA;
+        });
 
         // Calculate Totals
-        // Note: This is a simplified "Payments" statement. 
-        // Ideally we should also have "Invoices" or "Charges" to show running balance.
-        // For now, we will show "Payments Received" and current "Arrears" from tenant record.
+        const totalPaid = allTransactions
+            .filter(t => t.status === 'completed' || t.status === 'paid' || t.status === 'success')
+            .reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
 
-        const totalPaid = allTransactions.filter(t => t.status === 'completed' || t.status === 'paid').reduce((sum, t) => sum + (t.amount || 0), 0);
+        console.log(`[ReportService] Total Paid: ${totalPaid}, Balance: ${tenant.arrears || 0}`);
 
         return {
             meta: {
@@ -387,14 +435,14 @@ class ReportService {
                 name: tenant.name,
                 phone: tenant.phone,
                 unitCode: tenant.unitCode,
-                unitName: unit.unitName || unit.unitId || tenant.unitCode, // Preferred display name
+                unitName: unit.unitName || unit.unitId || tenant.unitCode,
                 propertyName: property.propertyName,
                 moveInDate: tenant.moveInDate,
                 arrears: tenant.arrears || 0
             },
             summary: {
                 totalPaid: totalPaid,
-                balance: tenant.arrears || 0 // Assuming arrears is the authoritative outstanding balance
+                balance: tenant.arrears || 0
             },
             transactions: allTransactions
         };
