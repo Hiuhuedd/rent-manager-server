@@ -260,6 +260,76 @@ class ReportService {
             tenants: tenantStatusList
         };
     }
+    /**
+     * Generate a Portfolio Report for all properties
+     */
+    async generatePortfolioReport(month) {
+        console.log(`[ReportService] Generating Portfolio Report for Month: ${month}`);
+
+        // 1. Fetch All Properties
+        const propertiesSnap = await getDocs(collection(db, 'properties'));
+        const properties = propertiesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        const agencySettings = await settingsService.getSettings();
+
+        const portfolioData = [];
+        let totalPortfolioExpected = 0;
+        let totalPortfolioCollected = 0;
+        let totalPortfolioUnpaid = 0;
+
+        // 2. Loop through each property and calculate concise stats
+        for (const property of properties) {
+            try {
+                // Reuse existing single property logic but we only need high level
+                // However, generatePropertyReport is heavy. Let's do a lighter aggregaton here.
+
+                // Fetch basic stats
+                const fullReport = await this.generatePropertyReport(property.id, month);
+
+                const income = fullReport.financials.income;
+                const expenses = fullReport.financials.expenses;
+
+                portfolioData.push({
+                    id: property.id,
+                    name: property.propertyName,
+                    owner: property.owner?.name || 'N/A',
+                    units: property.propertyUnitsTotal,
+                    occupied: property.propertyOccupiedUnits,
+                    expected: income.expected || 0,
+                    collected: income.total || 0,
+                    unpaid: income.unpaid || 0,
+                    expenses: expenses.total || 0,
+                    net: fullReport.financials.netIncome || 0
+                });
+
+                totalPortfolioExpected += (income.expected || 0);
+                totalPortfolioCollected += (income.total || 0);
+                totalPortfolioUnpaid += (income.unpaid || 0);
+
+            } catch (err) {
+                console.error(`[ReportService] Error generating stats for property ${property.id}:`, err);
+                // Continue with other properties
+            }
+        }
+
+        return {
+            meta: {
+                generatedAt: new Date(),
+                month,
+                agency: {
+                    name: agencySettings.agencyName || 'RentManager Agency',
+                    contact: agencySettings.customerServiceNumber || '',
+                },
+            },
+            summary: {
+                totalProperties: properties.length,
+                totalExpected: totalPortfolioExpected,
+                totalCollected: totalPortfolioCollected,
+                totalUnpaid: totalPortfolioUnpaid
+            },
+            properties: portfolioData
+        };
+    }
 }
 
 module.exports = new ReportService();

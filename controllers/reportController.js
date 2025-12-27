@@ -53,6 +53,159 @@ class ReportController {
     }
   }
 
+  downloadPortfolioReportPdf = async (req, res) => {
+    const { month } = req.params;
+
+    if (!month) {
+      return res.status(400).json({ success: false, error: 'Month (YYYY-MM) is required' });
+    }
+
+    try {
+      // 1. Get Data
+      const portfolioData = await reportService.generatePortfolioReport(month);
+      if (!portfolioData) throw new Error('Could not generate portfolio data');
+
+      const reportColor = req.query.reportColor || '#007aff';
+
+      // 2. Format HTML
+      const html = this._generatePortfolioHtmlTemplate(portfolioData, month, reportColor);
+
+      // 3. Generate PDF
+      const pdfBuffer = await pdfService.generatePdf(html);
+
+      // 4. Send Response
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=Portfolio_Report_${month}.pdf`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.send(pdfBuffer);
+
+    } catch (error) {
+      console.error('Error in downloadPortfolioReportPdf:', error);
+      res.status(500).json({ success: false, error: 'Failed to generate PDF' });
+    }
+  }
+
+  _generatePortfolioHtmlTemplate(data, selectedMonth, reportColor = '#007aff') {
+    const agency = data.meta.agency;
+
+    return `
+        <html>
+          <head>
+            <style>
+              body { font-family: 'Helvetica', sans-serif; padding: 0; margin: 0; color: #333; line-height: 1.6; }
+              
+              /* Header Block */
+              .premium-header-block { background-color: ${reportColor}; padding: 40px 40px 30px 40px; margin-bottom: 30px; }
+              .content-wrapper { padding: 0 40px 40px 40px; }
+
+              .report-title-letterhead { text-align: center; margin: 0; background-color: transparent; padding: 15px 0; border-bottom: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px; }
+              .report-title { font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.8); letter-spacing: 3px; text-transform: uppercase; }
+              
+              .report-header { display: flex; justify-content: space-between; align-items: flex-start; }
+              .property-info { flex: 1; }
+              .property-name { font-size: 24px; font-weight: 900; color: #ffffff; text-transform: uppercase; margin-bottom: 4px; }
+              .period-container { text-align: right; }
+              .period-label { font-size: 10px; font-weight: bold; color: rgba(255,255,255,0.7); text-transform: uppercase; margin-bottom: 2px; letter-spacing: 1px; }
+              .period-value { font-size: 14px; font-weight: bold; color: #ffffff; }
+              
+              .section { margin-bottom: 35px; }
+              .section-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; color: ${reportColor}; border-bottom: 1px solid #eee; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+              
+              table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+              th { text-align: left; font-size: 10px; color: #888; text-transform: uppercase; padding: 10px; border-bottom: 1px solid #eee; }
+              td { padding: 12px 10px; font-size: 12px; border-bottom: 1px solid #f9f9f9; }
+              
+              .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
+              .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 2px solid #333; font-weight: bold; font-size: 16px; }
+              
+              .net-income { background-color: ${reportColor}; color: white; padding: 25px; border-radius: 12px; margin-top: 20px; text-align: center; }
+              
+              .dashed-line { border-top: 2px dashed #eee; margin: 25px 0; width: 100%; }
+              .footer { margin-top: 60px; text-align: center; font-size: 11px; color: #999; border-top: 1px solid #eee; padding-top: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="premium-header-block">
+              <div class="report-title-letterhead">
+                <div class="report-title" style="font-size: 14px; color: #FFF; margin-bottom: 4px;">${agency.name.toUpperCase()}</div>
+                <div class="report-title">Monthly Portfolio Report</div>
+              </div>
+              <div class="report-header">
+                <div class="property-info">
+                  <div class="property-name">All Properties</div>
+                  <div class="owner-name" style="color:rgba(255,255,255,0.9); font-size:13px;">${data.summary.totalProperties} Properties Managed</div>
+                </div>
+                <div class="period-container">
+                  <div class="period-label">Period</div>
+                  <div class="period-value">${new Date(selectedMonth + '-01').toLocaleDateString('default', { month: 'short', year: 'numeric' }).toUpperCase()}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-wrapper">
+                <div class="dashed-line" style="margin-top: 0;"></div>
+
+                <div class="section">
+                  <div class="section-title">Portfolio Overview (KSH)</div>
+                  
+                  <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                      <div style="flex: 1; background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #eee;">
+                        <div style="font-size: 11px; color: #666; text-transform: uppercase;">Total Expected</div>
+                        <div style="font-size: 20px; font-weight: bold; color: #333; margin-top: 5px;">${data.summary.totalExpected.toLocaleString()}</div>
+                      </div>
+                      <div style="flex: 1; background: #f0fdf4; padding: 15px; border-radius: 8px; border: 1px solid #dcfce7;">
+                        <div style="font-size: 11px; color: #166534; text-transform: uppercase;">Total Collected</div>
+                        <div style="font-size: 20px; font-weight: bold; color: #16a34a; margin-top: 5px;">${data.summary.totalCollected.toLocaleString()}</div>
+                      </div>
+                      <div style="flex: 1; background: #fef2f2; padding: 15px; border-radius: 8px; border: 1px solid #fee2e2;">
+                        <div style="font-size: 11px; color: #991b1b; text-transform: uppercase;">Total Unpaid</div>
+                        <div style="font-size: 20px; font-weight: bold; color: #dc2626; margin-top: 5px;">${data.summary.totalUnpaid.toLocaleString()}</div>
+                      </div>
+                  </div>
+                </div>
+
+                <div class="section">
+                  <div class="section-title">Property Breakdown</div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="width: 25%;">Property</th>
+                        <th style="width: 20%;">Owner</th>
+                        <th style="width: 10%; text-align: center;">Occ.</th>
+                        <th style="width: 15%; text-align: right;">Expected</th>
+                        <th style="width: 15%; text-align: right;">Collected</th>
+                        <th style="width: 15%; text-align: right;">Unpaid</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${data.properties.map(p => `
+                        <tr>
+                          <td style="font-weight: bold;">${p.name}</td>
+                          <td style="color: #666;">${p.owner}</td>
+                          <td style="text-align: center;">${p.occupied}/${p.units}</td>
+                          <td style="text-align: right;">${p.expected.toLocaleString()}</td>
+                          <td style="text-align: right;">${p.collected.toLocaleString()}</td>
+                          <td style="text-align: right; color: ${p.unpaid > 0 ? '#dc2626' : '#16a34a'}; font-weight: ${p.unpaid > 0 ? 'bold' : 'normal'};">
+                            ${p.unpaid.toLocaleString()}
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="dashed-line" style="margin-bottom: 30px;"></div>
+
+                <div class="footer">
+                  This report remains the property of ${agency.name}. Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}.<br/>
+                  For enquiries, contact us at ${agency.contact}
+                </div>
+            </div>
+          </body>
+        </html>
+    `;
+  }
+
   _generateHtmlTemplate(reportData, selectedMonth, reportColor = '#007aff') {
     // Helper to format currency
     const formatCurrency = (amount) => `KSH ${amount ? amount.toLocaleString() : '0'}`;
