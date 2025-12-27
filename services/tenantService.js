@@ -580,11 +580,13 @@ class TenantService {
     if (propertySnap.exists()) {
       const propertyData = propertySnap.data();
       const newVacantCount = (propertyData.propertyVacantUnits || 0) + 1;
+      const newOccupiedCount = Math.max((propertyData.propertyOccupiedUnits || 1) - 1, 0);
       const rentAmount = unit?.rentAmount || 0;
       const newRevenue = Math.max((propertyData.propertyRevenueTotal || 0) - rentAmount, 0);
 
       await updateDoc(propertyRef, {
         propertyVacantUnits: newVacantCount,
+        propertyOccupiedUnits: newOccupiedCount,
         propertyRevenueTotal: newRevenue,
       });
     }
