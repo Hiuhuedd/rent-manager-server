@@ -47,9 +47,25 @@ class ReportService {
             where('propertyId', '==', propertyId)
         );
         const tenantsSnap = await getDocs(tenantsQuery);
-        const propertyTenants = tenantsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const propertyTenants = tenantsSnap.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(t => {
+                if (!t.createdAt) return true; // Include if no date (legacy support)
+
+                // Parse createdAt (handle Firestore Timestamp or String/Date)
+                const createdDate = t.createdAt.toDate ? t.createdAt.toDate() : new Date(t.createdAt);
+
+                // Calculate Start of Next Month from Selected Month
+                // selectedMonth is "YYYY-MM"
+                const [y, m] = month.split('-').map(Number);
+                const nextMonthDate = new Date(y, m, 1); // Month is 0-indexed in Date, so 'm' given 1-indexed input gives start of next month
+                // e.g. 2023-12 -> new Date(2023, 12, 1) which is Jan 1st 2024. Correct.
+
+                return createdDate < nextMonthDate;
+            });
+
         const tenantIds = new Set(propertyTenants.map(t => t.id));
-        console.log(`[ReportService] Found ${propertyTenants.length} tenants for property.`);
+        console.log(`[ReportService] Found ${propertyTenants.length} tenants for property (after date filtering).`);
 
         // A2. Fetch all units for this property to get display names
         const unitsQuery = query(
