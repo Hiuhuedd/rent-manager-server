@@ -342,7 +342,7 @@ class ReportService {
         const tenant = tenantSnap.data();
 
         // 2. Fetch Unit & Property
-        const unitSnap = await getDoc(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)));
+        const unitSnap = await getDocs(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)));
         const unit = unitSnap.empty ? {} : unitSnap.docs[0].data();
 
         const propertySnap = await getDoc(doc(db, 'properties', tenant.propertyId));
