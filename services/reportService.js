@@ -387,6 +387,7 @@ class ReportService {
                 name: tenant.name,
                 phone: tenant.phone,
                 unitCode: tenant.unitCode,
+                unitName: unit.unitName || unit.unitId || tenant.unitCode, // Preferred display name
                 propertyName: property.propertyName,
                 moveInDate: tenant.moveInDate,
                 arrears: tenant.arrears || 0

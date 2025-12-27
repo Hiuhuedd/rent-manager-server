@@ -15,14 +15,25 @@ class TenantService {
   async getAllTenants() {
     const currentMonth = getCurrentMonth();
 
-    // Fetch tenants and financial records in parallel
-    const [tenantsSnapshot, paymentsSnapshot] = await Promise.all([
+    // Fetch tenants, financial records, and units in parallel to map names
+    const [tenantsSnapshot, paymentsSnapshot, unitsSnapshot] = await Promise.all([
       getDocs(collection(db, 'tenants')),
       getDocs(query(
         collection(db, 'financial_records'),
         where('paymentMonth', '==', currentMonth)
-      ))
+      )),
+      getDocs(collection(db, 'units'))
     ]);
+
+    // Create Unit Map for Name Resolution
+    const unitMap = {};
+    unitsSnapshot.forEach(doc => {
+      const u = doc.data();
+      // Map both ID and Code to Name
+      const name = u.unitName || u.unitId || u.unitCode;
+      if (u.unitId) unitMap[u.unitId] = name;
+      if (u.unitCode) unitMap[u.unitCode] = name;
+    });
 
     // Aggregate payments by tenant
     const paymentsByTenant = {};
@@ -41,9 +52,12 @@ class TenantService {
       // Manually subtracting paidThisMonth here causes double-discounting.
       const effectiveArrears = (data.financialSummary?.arrears || data.arrears || 0);
 
+      const unitDisplayName = unitMap[data.unitCode] || data.unitCode;
+
       return {
         id: doc.id,
         ...data,
+        unitName: unitDisplayName, // Add unitName
         arrears: effectiveArrears, // Override arrears with calculated value
         originalArrears: data.arrears, // Keep original for reference if needed
         paidThisMonth,
