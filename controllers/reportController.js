@@ -51,74 +51,44 @@ class ReportController {
       console.error('Error in downloadReportPdf:', error);
       res.status(500).json({ success: false, error: 'Failed to generate PDF' });
     }
-    downloadTenantStatementPdf = async (req, res) => {
-      const { tenantId } = req.params;
+  }
 
-      if (!tenantId) {
-        return res.status(400).json({ success: false, error: 'Tenant ID is required' });
-      }
+  downloadPortfolioReportPdf = async (req, res) => {
+    const { month } = req.params;
 
-      try {
-        // 1. Get Data
-        const statementData = await reportService.generateTenantStatement(tenantId);
-        if (!statementData) throw new Error('Could not generate statement data');
-
-        const reportColor = req.query.reportColor || '#007aff';
-
-        // 2. Format HTML
-        const html = this._generateTenantStatementHtmlTemplate(statementData, reportColor);
-
-        // 3. Generate PDF
-        const pdfBuffer = await pdfService.generatePdf(html);
-
-        // 4. Send Response
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=Statement_${statementData.tenant.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
-        res.setHeader('Content-Length', pdfBuffer.length);
-        res.send(pdfBuffer);
-
-      } catch (error) {
-        console.error('Error in downloadTenantStatementPdf:', error);
-        res.status(500).json({ success: false, error: 'Failed to generate PDF' });
-      }
+    if (!month) {
+      return res.status(400).json({ success: false, error: 'Month (YYYY-MM) is required' });
     }
 
-    downloadPortfolioReportPdf = async (req, res) => {
-      const { month } = req.params;
+    try {
+      // 1. Get Data
+      const portfolioData = await reportService.generatePortfolioReport(month);
+      if (!portfolioData) throw new Error('Could not generate portfolio data');
 
-      if (!month) {
-        return res.status(400).json({ success: false, error: 'Month (YYYY-MM) is required' });
-      }
+      const reportColor = req.query.reportColor || '#007aff';
 
-      try {
-        // 1. Get Data
-        const portfolioData = await reportService.generatePortfolioReport(month);
-        if (!portfolioData) throw new Error('Could not generate portfolio data');
+      // 2. Format HTML
+      const html = this._generatePortfolioHtmlTemplate(portfolioData, month, reportColor);
 
-        const reportColor = req.query.reportColor || '#007aff';
+      // 3. Generate PDF
+      const pdfBuffer = await pdfService.generatePdf(html);
 
-        // 2. Format HTML
-        const html = this._generatePortfolioHtmlTemplate(portfolioData, month, reportColor);
+      // 4. Send Response
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=Portfolio_Report_${month}.pdf`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.send(pdfBuffer);
 
-        // 3. Generate PDF
-        const pdfBuffer = await pdfService.generatePdf(html);
-
-        // 4. Send Response
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=Portfolio_Report_${month}.pdf`);
-        res.setHeader('Content-Length', pdfBuffer.length);
-        res.send(pdfBuffer);
-
-      } catch (error) {
-        console.error('Error in downloadPortfolioReportPdf:', error);
-        res.status(500).json({ success: false, error: 'Failed to generate PDF' });
-      }
+    } catch (error) {
+      console.error('Error in downloadPortfolioReportPdf:', error);
+      res.status(500).json({ success: false, error: 'Failed to generate PDF' });
     }
+  }
 
-    _generatePortfolioHtmlTemplate(data, selectedMonth, reportColor = '#007aff') {
-      const agency = data.meta.agency;
+  _generatePortfolioHtmlTemplate(data, selectedMonth, reportColor = '#007aff') {
+    const agency = data.meta.agency;
 
-      return `
+    return `
         <html>
           <head>
             <style>
@@ -234,16 +204,16 @@ class ReportController {
           </body>
         </html>
     `;
-    }
+  }
 
-    _generateHtmlTemplate(reportData, selectedMonth, reportColor = '#007aff') {
-      // Helper to format currency
-      const formatCurrency = (amount) => `KSH ${amount ? amount.toLocaleString() : '0'}`;
-      const agency = reportData.meta.agency;
-      const owner = reportData.meta.owner;
-      const tenants = reportData.tenants || [];
+  _generateHtmlTemplate(reportData, selectedMonth, reportColor = '#007aff') {
+    // Helper to format currency
+    const formatCurrency = (amount) => `KSH ${amount ? amount.toLocaleString() : '0'}`;
+    const agency = reportData.meta.agency;
+    const owner = reportData.meta.owner;
+    const tenants = reportData.tenants || [];
 
-      return `
+    return `
         <html>
           <head>
             <style>
@@ -406,51 +376,51 @@ class ReportController {
           </body>
         </html>
     `;
-    }
-    downloadTenantStatementPdf = async (req, res) => {
-      const { tenantId } = req.params;
+  }
+  downloadTenantStatementPdf = async (req, res) => {
+    const { tenantId } = req.params;
 
-      if (!tenantId) {
-        return res.status(400).json({ success: false, error: 'Tenant ID is required' });
-      }
-
-      try {
-        // 1. Get Data
-        const statementData = await reportService.generateTenantStatement(tenantId);
-        if (!statementData) throw new Error('Could not generate statement data');
-
-        const reportColor = req.query.reportColor || '#007aff';
-
-        // 2. Format HTML
-        const html = this._generateTenantStatementHtmlTemplate(statementData, reportColor);
-
-        // 3. Generate PDF
-        const pdfBuffer = await pdfService.generatePdf(html);
-
-        // 4. Send Response
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=Statement_${statementData.tenant.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
-        res.setHeader('Content-Length', pdfBuffer.length);
-        res.send(pdfBuffer);
-
-      } catch (error) {
-        console.error('Error in downloadTenantStatementPdf:', error);
-        res.status(500).json({ success: false, error: 'Failed to generate PDF' });
-      }
+    if (!tenantId) {
+      return res.status(400).json({ success: false, error: 'Tenant ID is required' });
     }
 
-    _generateTenantStatementHtmlTemplate(data, reportColor = '#007aff') {
-      const agency = data.meta.agency;
-      const tenant = data.tenant;
+    try {
+      // 1. Get Data
+      const statementData = await reportService.generateTenantStatement(tenantId);
+      if (!statementData) throw new Error('Could not generate statement data');
 
-      // Helper for currency
-      const formatMoney = (amount) => `KSH ${amount ? amount.toLocaleString() : '0'}`;
-      const formatDate = (dateStr) => {
-        if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleDateString('default', { day: 'numeric', month: 'short', year: 'numeric' });
-      };
+      const reportColor = req.query.reportColor || '#007aff';
 
-      return `
+      // 2. Format HTML
+      const html = this._generateTenantStatementHtmlTemplate(statementData, reportColor);
+
+      // 3. Generate PDF
+      const pdfBuffer = await pdfService.generatePdf(html);
+
+      // 4. Send Response
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=Statement_${statementData.tenant.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.send(pdfBuffer);
+
+    } catch (error) {
+      console.error('Error in downloadTenantStatementPdf:', error);
+      res.status(500).json({ success: false, error: 'Failed to generate PDF' });
+    }
+  }
+
+  _generateTenantStatementHtmlTemplate(data, reportColor = '#007aff') {
+    const agency = data.meta.agency;
+    const tenant = data.tenant;
+
+    // Helper for currency
+    const formatMoney = (amount) => `KSH ${amount ? amount.toLocaleString() : '0'}`;
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '-';
+      return new Date(dateStr).toLocaleDateString('default', { day: 'numeric', month: 'short', year: 'numeric' });
+    };
+
+    return `
         <html>
           <head>
             <style>
@@ -564,7 +534,7 @@ class ReportController {
           </body>
         </html>
     `;
-    }
   }
+}
 
 module.exports = new ReportController();
