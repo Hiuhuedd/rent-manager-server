@@ -35,8 +35,8 @@ class PdfService {
             // Set content
             // waitUntil: 'networkidle0' ensures fonts/images load
             await page.setContent(htmlContent, {
-                waitUntil: 'networkidle0',
-                timeout: 30000,
+                waitUntil: 'load',
+                timeout: 60000,
             });
 
             // Generate PDF
