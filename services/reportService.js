@@ -178,6 +178,10 @@ class ReportService {
             };
         });
 
+        // Calculate Totals from Tenant List
+        const totalExpected = tenantStatusList.reduce((sum, t) => sum + t.expectedAmount, 0);
+        const totalUnpaid = tenantStatusList.reduce((sum, t) => sum + t.unpaidAmount, 0);
+
         // 5. Calculate Agency Commission
         const commissionRate = propertyData.agencyCommission !== undefined ? propertyData.agencyCommission : 8;
         const agencyCommissionTotal = totalAllocatedRent * (commissionRate / 100);
@@ -206,6 +210,8 @@ class ReportService {
             financials: {
                 income: {
                     total: totalRentCollected,
+                    expected: totalExpected,
+                    unpaid: totalUnpaid,
                     transactionCount: payments.length,
                     breakdown: payments.map(p => ({
                         unit: p.unitCode || p.unitId,

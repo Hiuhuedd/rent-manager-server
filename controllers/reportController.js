@@ -64,10 +64,17 @@ class ReportController {
         <html>
           <head>
             <style>
-              body { font-family: 'Helvetica', sans-serif; padding: 40px; color: #333; line-height: 1.6; }
+              body { font-family: 'Helvetica', sans-serif; padding: 0; margin: 0; color: #333; line-height: 1.6; }
+              
+              /* Header Block - Full Width */
+              .premium-header-block { background-color: ${reportColor}; padding: 40px 40px 30px 40px; margin-bottom: 30px; }
+              
+              /* Content Wrapper */
+              .content-wrapper { padding: 0 40px 40px 40px; }
+
               .report-title-letterhead { text-align: center; margin: 0; background-color: transparent; padding: 15px 0; border-bottom: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px; }
               .report-title { font-size: 11px; font-weight: 900; color: rgba(255,255,255,0.8); letter-spacing: 3px; text-transform: uppercase; }
-              .premium-header-block { background-color: ${reportColor}; margin: -40px -40px 30px -40px; padding: 0 40px 30px 40px; }
+              
               .report-header { display: flex; justify-content: space-between; align-items: flex-start; }
               .property-info { flex: 1; }
               .property-name { font-size: 24px; font-weight: 900; color: #ffffff; text-transform: uppercase; margin-bottom: 4px; }
@@ -86,7 +93,7 @@ class ReportController {
               .status-paid { background-color: #e3f9e5; color: #1f8b24; }
               .status-partial { background-color: #fff4e5; color: #b7791f; }
               .status-unpaid { background-color: #ffe5e5; color: #c53030; }
- 
+              
               .row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
               .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 2px solid #333; font-weight: bold; font-size: 16px; }
               
@@ -101,6 +108,7 @@ class ReportController {
           <body>
             <div class="premium-header-block">
               <div class="report-title-letterhead">
+                <div class="report-title" style="font-size: 14px; color: #FFF; margin-bottom: 4px;">${agency.name.toUpperCase()}</div>
                 <div class="report-title">Monthly Financial Statement</div>
               </div>
               <div class="report-header">
@@ -115,72 +123,85 @@ class ReportController {
               </div>
             </div>
 
-            <div class="dashed-line"></div>
+            <div class="content-wrapper">
+                <div class="dashed-line" style="margin-top: 0;"></div>
 
-            <div class="section">
-              <div class="section-title">Tenant Payment Schedule</div>
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width: 10%;">Unit</th>
-                    <th style="width: 35%;">Tenant</th>
-                    <th style="width: 15%;">Expected</th>
-                    <th style="width: 20%; text-align: right;">Paid</th>
-                    <th style="width: 20%; text-align: right;">Unpaid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${tenants.map(t => `
-                    <tr>
-                      <td>${t.unitName}</td>
-                      <td>${t.tenantName}</td>
-                      <td>${t.expectedAmount ? t.expectedAmount.toLocaleString() : '0'}</td>
-                      <td style="text-align: right;">${t.amountPaid ? t.amountPaid.toLocaleString() : '0'}</td>
-                      <td style="text-align: right; color: ${t.unpaidAmount > 0 ? '#c53030' : '#1f8b24'}; font-weight: bold;">
-                        ${t.unpaidAmount ? t.unpaidAmount.toLocaleString() : '0'}
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-
-            <div class="dashed-line"></div>
-
-            <div style="display: flex; gap: 40px;">
-                <div class="section" style="flex: 1;">
-                  <div class="section-title">Income Summary (KSH)</div>
-                  <div class="row">
-                    <span>Rent Collections</span>
-                    <span>${reportData.financials.income.total?.toLocaleString()}</span>
-                  </div>
-                  <div class="row" style="color: #666; font-size: 12px;">
-                    <span>Number of transactions: ${reportData.financials.income.transactionCount}</span>
-                  </div>
-                </div>
-
-                <div class="section" style="flex: 1;">
-                  <div class="section-title">Operating Expenses (KSH)</div>
-                  ${(reportData.financials.expenses.items || []).map(item => `
-                        <div class="row">
-                          <span>${item.name}</span>
-                          <span>${item.amount?.toLocaleString()}</span>
-                        </div>
+                <div class="section">
+                  <div class="section-title">Tenant Payment Schedule</div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="width: 10%;">Unit</th>
+                        <th style="width: 35%;">Tenant</th>
+                        <th style="width: 15%;">Expected</th>
+                        <th style="width: 20%; text-align: right;">Paid</th>
+                        <th style="width: 20%; text-align: right;">Unpaid</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${tenants.map(t => `
+                        <tr>
+                          <td>${t.unitName}</td>
+                          <td>${t.tenantName}</td>
+                          <td>${t.expectedAmount ? t.expectedAmount.toLocaleString() : '0'}</td>
+                          <td style="text-align: right;">${t.amountPaid ? t.amountPaid.toLocaleString() : '0'}</td>
+                          <td style="text-align: right; color: ${t.unpaidAmount > 0 ? '#c53030' : '#1f8b24'}; font-weight: bold;">
+                            ${t.unpaidAmount ? t.unpaidAmount.toLocaleString() : '0'}
+                          </td>
+                        </tr>
                       `).join('')}
-                  ${(!reportData.financials.expenses.items || reportData.financials.expenses.items.length === 0) ? '<div class="row" style="color:#999; font-style:italic;">No operating expenses recorded</div>' : ''}
-                  
-                  <div class="section-title" style="margin-top: 20px;">Agency Commission (KSH)</div>
-                  <div class="row">
-                    <span>Management Fee (${reportData.financials.commission?.rate || 8}%)</span>
-                    <span>${reportData.financials.commission?.total?.toLocaleString()}</span>
-                  </div>
-
-                  <div class="total-row">
-                    <span>Total Expenses</span>
-                    <span>${reportData.financials.expenses.total?.toLocaleString()}</span>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
-            </div>
+
+                <div class="dashed-line"></div>
+
+                <div style="display: flex; gap: 40px;">
+                    <div class="section" style="flex: 1;">
+                      <div class="section-title">Income Summary (KSH)</div>
+                      
+                      <div class="row" style="margin-bottom: 4px; color: #666;">
+                        <span>Total Expected</span>
+                        <span>${reportData.financials.income.expected?.toLocaleString() || '0'}</span>
+                      </div>
+                      
+                      <div class="row" style="margin-bottom: 12px; color: #666;">
+                        <span>Total Unpaid</span>
+                        <span style="color: #c53030;">${reportData.financials.income.unpaid?.toLocaleString() || '0'}</span>
+                      </div>
+
+                      <div class="total-row" style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 0;">
+                        <span>Rent Collections</span>
+                        <span>${reportData.financials.income.total?.toLocaleString()}</span>
+                      </div>
+                      
+                      <div class="row" style="color: #999; font-size: 11px; margin-top: 4px;">
+                        <span>Number of transactions: ${reportData.financials.income.transactionCount}</span>
+                      </div>
+                    </div>
+
+                    <div class="section" style="flex: 1;">
+                      <div class="section-title">Operating Expenses (KSH)</div>
+                      ${(reportData.financials.expenses.items || []).map(item => `
+                            <div class="row">
+                              <span>${item.name}</span>
+                              <span>${item.amount?.toLocaleString()}</span>
+                            </div>
+                          `).join('')}
+                      ${(!reportData.financials.expenses.items || reportData.financials.expenses.items.length === 0) ? '<div class="row" style="color:#999; font-style:italic;">No operating expenses recorded</div>' : ''}
+                      
+                      <div class="section-title" style="margin-top: 20px;">Agency Commission (KSH)</div>
+                      <div class="row">
+                        <span>Management Fee (${reportData.financials.commission?.rate || 8}%)</span>
+                        <span>${reportData.financials.commission?.total?.toLocaleString()}</span>
+                      </div>
+
+                      <div class="total-row">
+                        <span>Total Expenses</span>
+                        <span>${reportData.financials.expenses.total?.toLocaleString()}</span>
+                      </div>
+                    </div>
+                </div>
 
                 <div class="dashed-line"></div>
 
@@ -194,13 +215,14 @@ class ReportController {
 
                 <div class="dashed-line" style="margin-bottom: 30px;"></div>
 
-            <div class="footer">
-              This report remains the property of ${agency.name}. Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}.<br/>
-              For enquiries, contact us at ${agency.contact}
+                <div class="footer">
+                  This report remains the property of ${agency.name}. Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}.<br/>
+                  For enquiries, contact us at ${agency.contact}
+                </div>
             </div>
           </body>
         </html>
-      `;
+    `;
   }
 }
 
