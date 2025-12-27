@@ -330,6 +330,74 @@ class ReportService {
             properties: portfolioData
         };
     }
+    /**
+     * Generate a full Statement of Account for a specific tenant
+     */
+    async generateTenantStatement(tenantId) {
+        console.log(`[ReportService] Generating Statement for Tenant: ${tenantId}`);
+
+        // 1. Fetch Tenant
+        const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
+        if (!tenantSnap.exists()) throw new Error('Tenant not found');
+        const tenant = tenantSnap.data();
+
+        // 2. Fetch Unit & Property
+        const unitSnap = await getDoc(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)));
+        const unit = unitSnap.empty ? {} : unitSnap.docs[0].data();
+
+        const propertySnap = await getDoc(doc(db, 'properties', tenant.propertyId));
+        const property = propertySnap.exists() ? propertySnap.data() : { propertyName: 'Unknown Property' };
+
+        const agencySettings = await settingsService.getSettings();
+
+        // 3. Fetch All Payments (Payment Logs or Financial Records)
+        // We prefer 'paymentLogs' for full history including timestamps
+        const logsQuery = query(
+            collection(db, 'paymentLogs'),
+            where('tenantId', '==', tenantId)
+        );
+        const logsSnap = await getDocs(logsQuery);
+
+        let allTransactions = logsSnap.docs.map(d => ({
+            id: d.id,
+            ...d.data(),
+            date: d.data().createdAt || d.data().paymentDate, // Fallback
+            isPayment: true
+        }));
+
+        // Sort by date descending
+        allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        // Calculate Totals
+        // Note: This is a simplified "Payments" statement. 
+        // Ideally we should also have "Invoices" or "Charges" to show running balance.
+        // For now, we will show "Payments Received" and current "Arrears" from tenant record.
+
+        const totalPaid = allTransactions.filter(t => t.status === 'completed' || t.status === 'paid').reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        return {
+            meta: {
+                generatedAt: new Date(),
+                agency: {
+                    name: agencySettings.agencyName || 'RentManager Agency',
+                    contact: agencySettings.customerServiceNumber || '',
+                },
+            },
+            tenant: {
+                name: tenant.name,
+                phone: tenant.phone,
+                unitCode: tenant.unitCode,
+                propertyName: property.propertyName,
+                moveInDate: tenant.moveInDate,
+                arrears: tenant.arrears || 0
+            },
+            summary: {
+                totalPaid: totalPaid,
+                balance: tenant.arrears || 0 // Assuming arrears is the authoritative outstanding balance
+            },
+            transactions: allTransactions
+        };
+    }
 }
 
 module.exports = new ReportService();
