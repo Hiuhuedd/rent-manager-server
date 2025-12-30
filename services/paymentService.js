@@ -519,6 +519,7 @@ class PaymentService {
           name: tenant.name,
           phone: tenant.phone,
           unitCode: tenant.unitCode,
+          unitName: unit.unitName || tenant.unitCode,
           propertyName: tenant.propertyDetails?.propertyName || 'N/A',
           expectedAmount: liveExpected,
           paidAmount: tracking.totalPaid || 0,
@@ -526,7 +527,8 @@ class PaymentService {
           status: tracking.status || PAYMENT_STATUS.UNPAID,
           arrears: tenantArrears,
           moveInDate: tenant.moveInDate,
-          moveOutDate: tenant.moveOutDate
+          moveOutDate: tenant.moveOutDate,
+          propertyId: tenant.propertyId // Add propertyId for payment info lookup
         });
       }
     }
@@ -583,9 +585,9 @@ class PaymentService {
     };
   }
 
-  async sendReminders(month) {
+  async sendReminders(month, tenantIds = []) {
     const targetMonth = month || getCurrentMonth();
-    console.log(`📊 Sending reminders for: ${targetMonth}`);
+    console.log(`📊 Sending reminders for: ${targetMonth} ${tenantIds.length ? `(Targets: ${tenantIds.length})` : '(All Overdue)'}`);
 
     const overdueData = await this.getOverduePayments(targetMonth);
     const overdueTenants = overdueData.tenants;
@@ -593,17 +595,40 @@ class PaymentService {
     const remindersSent = [];
     const remindersFailed = [];
 
+    // Fetch global settings for paybill
+    let paybill = '522533'; // Default from settingsService
+    try {
+      // Use the correct document ID 'app-settings'
+      const settingsSnap = await getDoc(doc(db, 'settings', 'app-settings'));
+      if (settingsSnap.exists()) {
+        paybill = settingsSnap.data().paybill || paybill;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch settings for SMS:', err);
+    }
+
     for (const tenantData of overdueTenants) {
+      // Filter if tenantIds are provided
+      if (tenantIds && tenantIds.length > 0 && !tenantIds.includes(tenantData.tenantId)) {
+        continue;
+      }
+
       try {
         const debt = {
-          debtCode: tenantData.unitCode,
+          debtCode: tenantData.unitName || tenantData.unitCode,
           storeOwner: { name: tenantData.name },
           remainingAmount: tenantData.remainingAmount,
           paymentMethod: 'mpesa',
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         };
 
-        const smsMessage = smsService.generateInvoiceSMS(debt, tenantData.phone);
+        const paymentInfo = {
+          paybill: paybill,
+          // Use tenant phone as the account number
+          accountNumber: tenantData.phone
+        };
+
+        const smsMessage = smsService.generateInvoiceSMS(debt, paymentInfo);
         const smsResult = await smsService.sendSMS(tenantData.phone, smsMessage, tenantData.tenantId, tenantData.unitCode);
 
         if (smsResult.success) {
