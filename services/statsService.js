@@ -142,6 +142,25 @@ class StatsService {
         }
       }
 
+      // === Fetch electricity bills for this property ===
+      let elecBillsMap = new Map();
+      try {
+        const elecBillId = `${propDoc.id}_${monthKey}`;
+        const elecBillRef = doc(db, 'electricity_bills', elecBillId);
+        const elecBillSnap = await getDoc(elecBillRef);
+
+        if (elecBillSnap.exists()) {
+          const elecBillData = elecBillSnap.data();
+          elecBillData.bills?.forEach(bill => {
+            const uid = String(bill.unitId).trim();
+            const amount = parseFloat(bill.totalBill) || 0;
+            elecBillsMap.set(uid, amount);
+          });
+        }
+      } catch (elecBillError) {
+        console.warn(`[STATS] Failed to fetch electricity bills:`, elecBillError.message);
+      }
+
       // === Process each unit ===
       for (const unitSnap of historicalUnits) {
         const unitData = unitSnap.data();
@@ -179,12 +198,25 @@ class StatsService {
           waterRevenue = !isNaN(fixedWaterBill) ? fixedWaterBill : water;
         }
 
+        // Electricity Revenue
+        let electricityRevenue = 0;
+        const unitId = String(unitData.unitId || '').trim();
+        const docId = String(unitSnap.id).trim();
+
+        if (elecBillsMap.has(unitId)) {
+          electricityRevenue = elecBillsMap.get(unitId);
+        } else if (elecBillsMap.has(docId)) {
+          electricityRevenue = elecBillsMap.get(docId);
+        } else {
+          electricityRevenue = parseFloat(unitData.utilityFees?.electricityBill) || 0;
+        }
+
         if (wasOccupiedInMonth) {
           occupiedUnits++;
           const movedInThisMonth = moveInDate && moveInDate >= monthStart && moveInDate < monthEnd;
-          const unitTotal = rent + garbage + waterRevenue + (movedInThisMonth ? (parseFloat(unitData.depositAmount) || 0) : 0);
+          const unitTotal = rent + garbage + waterRevenue + electricityRevenue + (movedInThisMonth ? (parseFloat(unitData.depositAmount) || 0) : 0);
           expectedMonthlyRevenue += unitTotal;
-          console.log(`[STATS] Unit ${unitData.unitId} expected: ${unitTotal} (Rent: ${rent}, G: ${garbage}, W: ${waterRevenue})`);
+          console.log(`[STATS] Unit ${unitData.unitId} expected: ${unitTotal} (Rent: ${rent}, G: ${garbage}, W: ${waterRevenue}, E: ${electricityRevenue})`);
         } else {
           vacantUnits++;
         }

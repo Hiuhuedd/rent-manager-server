@@ -62,7 +62,8 @@ class PropertyService {
     const recalculatedRevenue = units.reduce((sum, unit) => {
       // Revenue calculation includes recurring monthly fees, not deposit
       const waterBill = includeWaterInRevenue ? unit.utilityFees.waterBill : 0;
-      return sum + unit.rentAmount + unit.utilityFees.garbageFee + waterBill;
+      const electricityBill = unit.utilityFees.electricityBill || 0;
+      return sum + unit.rentAmount + unit.utilityFees.garbageFee + waterBill + electricityBill;
     }, 0);
 
     const vacantCount = units.filter(u => u.isVacant).length;
@@ -108,11 +109,12 @@ class PropertyService {
       const deposit = parseFloat(unit.depositAmount) || 0;
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
       const water = parseFloat(unit.utilityFees?.waterBill) || 0;
+      const electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
 
       // Ensure creation captures unitName if provided
       const unitName = unit.unitName || unit.unitId;
 
-      const unitTotal = rent + garbage + water; // Revenue excludes deposit
+      const unitTotal = rent + garbage + water + electricity; // Revenue excludes deposit
       totalRevenue += unitTotal;
 
       const unitData = {
@@ -123,7 +125,7 @@ class PropertyService {
         category: unit.category || 'Standard',
         rentAmount: rent,
         depositAmount: deposit,
-        utilityFees: { garbageFee: garbage, waterBill: water },
+        utilityFees: { garbageFee: garbage, waterBill: water, electricityBill: electricity },
         createdAt: now,
       };
 
@@ -202,8 +204,9 @@ class PropertyService {
       const deposit = parseFloat(depositAmount) || 0;
       const garbage = parseFloat(utilityFees.garbageFee) || 0;
       const water = parseFloat(utilityFees.waterBill) || 0;
+      const electricity = parseFloat(utilityFees.electricityBill) || 0;
 
-      const unitTotal = rent + garbage + water;
+      const unitTotal = rent + garbage + water + electricity;
       totalRevenue += unitTotal;
 
       if (isVacant === true) vacantCount++;
@@ -215,7 +218,11 @@ class PropertyService {
           unitName: unitName || unitId, // Update unitName
           rentAmount: rent,
           depositAmount: deposit, // Update deposit
-          utilityFees: { garbageFee: garbage, waterBill: water },
+          utilityFees: {
+            garbageFee: garbage,
+            waterBill: water,
+            electricityBill: electricity
+          },
           isVacant: !!isVacant,
           category: category || 'Standard',
         },
@@ -286,6 +293,7 @@ class PropertyService {
     const deposit = parseFloat(data.depositAmount) || 0;
     const garbage = parseFloat(data.utilityFees?.garbageFee) || 0;
     const water = parseFloat(data.utilityFees?.waterBill) || 0;
+    const electricity = parseFloat(data.utilityFees?.electricityBill) || 0;
     const waterMeterReading = (data.waterMeterReading !== undefined && data.waterMeterReading !== null && data.waterMeterReading !== '') ? parseFloat(data.waterMeterReading) : null;
 
     // Build update object
@@ -293,7 +301,7 @@ class PropertyService {
       unitName: data.unitName || unitId,
       rentAmount: rent,
       depositAmount: deposit,
-      utilityFees: { garbageFee: garbage, waterBill: water },
+      utilityFees: { garbageFee: garbage, waterBill: water, electricityBill: electricity },
       isVacant: data.isVacant !== undefined ? !!data.isVacant : unitSnap.data().isVacant,
       category: data.category || unitSnap.data().category,
       updatedAt: serverTimestamp(),
