@@ -191,10 +191,12 @@ class ElectricityBillService {
             unitSnaps.forEach(snap => {
                 if (snap.exists()) {
                     const uData = snap.data();
-                    totalRevenue += parseFloat(uData.rentAmount) || 0;
-                    totalRevenue += parseFloat(uData.utilityFees?.garbageFee) || 0;
-                    totalRevenue += parseFloat(uData.utilityFees?.waterBill) || 0;
-                    totalRevenue += parseFloat(uData.utilityFees?.electricityBill) || 0;
+                    const rent = parseFloat(uData.rentAmount) || 0;
+                    const garbage = parseFloat(uData.utilityFees?.garbageFee) || 0;
+                    const water = parseFloat(uData.utilityFees?.waterBill) || 0;
+                    const elec = parseFloat(uData.utilityFees?.electricityBill) || 0;
+                    const unitTotal = rent + garbage + water + elec;
+                    totalRevenue += unitTotal;
                 }
             });
         }

@@ -62,9 +62,11 @@ class PropertyService {
 
     const recalculatedRevenue = units.reduce((sum, unit) => {
       // Revenue calculation includes recurring monthly fees, not deposit
-      const waterBill = includeWaterInRevenue ? unit.utilityFees.waterBill : 0;
-      const electricityBill = unit.utilityFees.electricityBill || 0;
-      return sum + unit.rentAmount + unit.utilityFees.garbageFee + waterBill + electricityBill;
+      const waterBill = includeWaterInRevenue ? (unit.utilityFees?.waterBill || 0) : 0;
+      const electricityBill = unit.utilityFees?.electricityBill || 0;
+      const total = sum + (unit.rentAmount || 0) + (unit.utilityFees?.garbageFee || 0) + waterBill + electricityBill;
+      console.log(`[DEBUG_PROPERTY] ${unit.unitId} - Rent: ${unit.rentAmount}, G: ${unit.utilityFees.garbageFee}, W: ${waterBill}, E: ${electricityBill}, Total: ${total}`);
+      return total;
     }, 0);
 
     const vacantCount = units.filter(u => u.isVacant).length;
@@ -117,6 +119,7 @@ class PropertyService {
 
       const unitTotal = rent + garbage + water + electricity; // Revenue excludes deposit
       totalRevenue += unitTotal;
+      console.log(`[DEBUG_CREATE] Unit ${unitId}: R:${rent} G:${garbage} W:${water} E:${electricity} = ${unitTotal}`);
 
       const unitData = {
         unitId,

@@ -217,7 +217,6 @@ class StatsService {
           const movedInThisMonth = moveInDate && moveInDate >= monthStart && moveInDate < monthEnd;
           const unitTotal = rent + garbage + waterRevenue + electricityRevenue + (movedInThisMonth ? (parseFloat(unitData.depositAmount) || 0) : 0);
           expectedMonthlyRevenue += unitTotal;
-          console.log(`[STATS] Unit ${unitData.unitId} expected: ${unitTotal} (Rent: ${rent}, G: ${garbage}, W: ${waterRevenue}, E: ${electricityRevenue})`);
         } else {
           vacantUnits++;
         }
