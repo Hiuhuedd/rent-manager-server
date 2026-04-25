@@ -47,7 +47,7 @@ class ElectricityBillService {
             propertyId,
             propertyName: propertyData.propertyName,
             month: targetMonth,
-            tariffSettings: elecSettings,
+            settings: elecSettings,
             bills: bills.map(bill => ({
                 unitId: bill.unitId,
                 unitCode: bill.unitCode || bill.unitId,
@@ -254,7 +254,7 @@ class ElectricityBillService {
                 propertyId,
                 propertyName: propertyData.propertyName,
                 month: targetMonth,
-                tariffSettings: propertyData.electricitySettings || {},
+                settings: propertyData.electricitySettings || {},
                 bills: bills,
                 totalAmount: 0,
                 exists: false,
