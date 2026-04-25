@@ -13,6 +13,7 @@ const settingsRoutes = require('./settingsRoutes');
 const runningCostRoutes = require('./runningCostRoutes');
 const reportRoutes = require('./reportRoutes');
 const waterBillRoutes = require('./waterBillRoutes');
+const electricityBillRoutes = require('./electricityBillRoutes');
 
 router.use('/properties', propertyRoutes);
 router.use('/tenants', tenantRoutes);
@@ -23,5 +24,6 @@ router.use('/settings', settingsRoutes);
 router.use('/running-costs', runningCostRoutes);
 router.use('/reports', reportRoutes);
 router.use('/water-bills', waterBillRoutes);
+router.use('/electricity-bills', electricityBillRoutes);
 
 module.exports = router;
