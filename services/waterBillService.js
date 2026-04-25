@@ -127,16 +127,26 @@ class WaterBillService {
                 });
             }
 
-            // Calculate total water bills for this month from the bills we just saved
-            const totalWaterBills = bills.reduce((sum, bill) => sum + (parseFloat(bill.totalBill) || 0), 0);
-            const totalRevenue = totalRent + totalGarbage + totalWaterBills;
+            // Fetch total electricity bills for this month
+            let totalElectricityBills = 0;
+            try {
+                const elecBillId = `${propertyId}_${targetMonth}`;
+                const elecBillSnap = await getDoc(doc(db, 'electricity_bills', elecBillId));
+                if (elecBillSnap.exists()) {
+                    totalElectricityBills = parseFloat(elecBillSnap.data().totalAmount) || 0;
+                }
+            } catch (e) {
+                console.warn(`[REVENUE] Failed to fetch electricity bills for revenue recalculation:`, e.message);
+            }
+
+            const totalRevenue = totalRent + totalGarbage + totalWaterBills + totalElectricityBills;
 
             await setDoc(propertyRef, {
                 propertyRevenueTotal: totalRevenue,
                 updatedAt: serverTimestamp(),
             }, { merge: true });
 
-            console.log(`[SUCCESS] Property revenue recalculated: Rent(${totalRent}) + Garbage(${totalGarbage}) + Water(${totalWaterBills}) = ${totalRevenue}`);
+            console.log(`[SUCCESS] Property revenue recalculated: Rent(${totalRent}) + Garbage(${totalGarbage}) + Water(${totalWaterBills}) + Elec(${totalElectricityBills}) = ${totalRevenue}`);
         }
 
         // Update tenant monthly tracking for affected units

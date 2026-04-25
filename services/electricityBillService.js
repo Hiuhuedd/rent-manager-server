@@ -195,11 +195,17 @@ class ElectricityBillService {
                     const garbage = parseFloat(uData.utilityFees?.garbageFee) || 0;
                     const water = parseFloat(uData.utilityFees?.waterBill) || 0;
                     const elec = parseFloat(uData.utilityFees?.electricityBill) || 0;
-                    const unitTotal = rent + garbage + water + elec;
-                    totalRevenue += unitTotal;
+                    const monthlyRent = rent + garbage + water + elec;
+                    totalRevenue += monthlyRent;
                 }
             });
         }
+
+        // Recalculate property revenue including water bills
+        const targetMonth = getCurrentMonth(); // This might be problematic if called from a specific month save
+        // Actually, the electricityBillService recalculatePropertyRevenue doesn't take month.
+        // It seems to be a general revenue estimate based on current utilityFees on units.
+        // That's fine as a general estimate.
 
         await setDoc(propertyRef, {
             propertyRevenueTotal: totalRevenue,

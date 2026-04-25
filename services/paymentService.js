@@ -257,6 +257,7 @@ class PaymentService {
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
       const fixedWater = parseFloat(unitProperty?.waterMeterSettings?.fixedWaterBill);
       let water = !isNaN(fixedWater) ? fixedWater : (parseFloat(unit.utilityFees?.waterBill) || 0);
+      let electricity = 0;
       const deposit = parseFloat(unit.depositAmount) || 0;
 
       // For properties with individual meters, fetch water bill from water_bills collection
@@ -290,6 +291,33 @@ class PaymentService {
         }
       }
 
+      // Fetch electricity bill from electricity_bills collection
+      try {
+        const elecBillId = `${unit.propertyId}_${targetMonth}`;
+        const elecBillRef = doc(db, 'electricity_bills', elecBillId);
+        const elecBillSnap = await getDoc(elecBillRef);
+
+        if (elecBillSnap.exists()) {
+          const elecBillData = elecBillSnap.data();
+          const targetUnitId = String(unit.unitId || unit.code || '').trim();
+          const unitBill = elecBillData.bills?.find(b =>
+            String(b.unitId).trim() === targetUnitId ||
+            String(b.unitCode).trim() === targetUnitId
+          );
+
+          if (unitBill) {
+            electricity = parseFloat(unitBill.totalBill) || 0;
+            console.log(`[REPORT] Matched electricity bill for ${targetUnitId}: ${electricity}`);
+          }
+        } else {
+          // Fallback to unit's fixed electricity if no monthly bill found
+          electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
+        }
+      } catch (elecBillError) {
+        console.warn(`⚠️ [REPORT] Failed to fetch electricity bill for unit ${unit.unitId}:`, elecBillError.message);
+        electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
+      }
+
       // Check if deposit should be included this month
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
       const moveInYear = moveInDate?.getFullYear();
@@ -298,7 +326,7 @@ class PaymentService {
       const depositPending = tenant.rentDeposit?.status === 'pending';
       const includeDeposit = isFirstMonth && depositPending;
 
-      const monthlyRent = rent + garbage + water;
+      const monthlyRent = rent + garbage + water + electricity;
       const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
 
       // Get tracking data from most recent payment or calculate fresh
@@ -343,9 +371,9 @@ class PaymentService {
               remaining: rent
             },
             utilities: {
-              required: garbage + water,
+              required: garbage + water + electricity,
               paid: 0,
-              remaining: garbage + water
+              remaining: garbage + water + electricity
             }
           }
         };
@@ -476,7 +504,42 @@ class PaymentService {
       const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
       const fixedWater = parseFloat(unitProperty?.waterMeterSettings?.fixedWaterBill);
       let water = !isNaN(fixedWater) ? fixedWater : (parseFloat(unit.utilityFees?.waterBill) || 0);
+      let electricity = 0;
       const deposit = parseFloat(unit.depositAmount) || 0;
+
+      // If individual meter, try fetching the specific water bill for this month
+      if (waterMeterType === 'individual') {
+        try {
+          const waterBillId = `${unit.propertyId}_${targetMonth}`;
+          const waterBillSnap = await getDoc(doc(db, 'water_bills', waterBillId));
+          if (waterBillSnap.exists()) {
+            const targetUnitId = String(unit.unitId || unit.code || '').trim();
+            const unitBill = waterBillSnap.data().bills?.find(b =>
+              String(b.unitId).trim() === targetUnitId ||
+              String(b.unitCode).trim() === targetUnitId
+            );
+            if (unitBill) water = parseFloat(unitBill.totalBill) || 0;
+          }
+        } catch (e) { }
+      }
+
+      // Fetch electricity bill
+      try {
+        const elecBillId = `${unit.propertyId}_${targetMonth}`;
+        const elecBillSnap = await getDoc(doc(db, 'electricity_bills', elecBillId));
+        if (elecBillSnap.exists()) {
+          const targetUnitId = String(unit.unitId || unit.code || '').trim();
+          const unitBill = elecBillSnap.data().bills?.find(b =>
+            String(b.unitId).trim() === targetUnitId ||
+            String(b.unitCode).trim() === targetUnitId
+          );
+          if (unitBill) electricity = parseFloat(unitBill.totalBill) || 0;
+        } else {
+          electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
+        }
+      } catch (e) {
+        electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
+      }
 
       const moveInDate = tenant.moveInDate ? new Date(tenant.moveInDate) : null;
       const moveInYear = moveInDate?.getFullYear();
@@ -485,7 +548,7 @@ class PaymentService {
       const depositPending = tenant.rentDeposit?.status === 'pending';
       const includeDeposit = isFirstMonth && depositPending;
 
-      const monthlyRent = rent + garbage + water;
+      const monthlyRent = rent + garbage + water + electricity;
       const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
 
       const liveExpected = totalExpected;
