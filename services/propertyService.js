@@ -77,6 +77,7 @@ class PropertyService {
       caretaker: propertyData.caretaker || {},
       owner: propertyData.owner || {},
       waterMeterSettings: propertyData.waterMeterSettings || { meterType: 'single', costPerUnit: 95 },
+      electricitySettings: propertyData.electricitySettings || {},
       agencyCommission: propertyData.agencyCommission !== undefined ? propertyData.agencyCommission : 8,
       createdAt: propertyData.createdAt?.toDate?.() || null,
       units,
@@ -87,7 +88,7 @@ class PropertyService {
   /**
    * Create a new property + units with proper createdAt timestamps
    */
-  async createProperty({ propertyName, units, caretaker, owner, waterMeterSettings }) {
+  async createProperty({ propertyName, units, caretaker, owner, waterMeterSettings, electricitySettings }) {
     const start = Date.now();
     const batch = writeBatch(db);
     const propertyRef = doc(collection(db, 'properties'));
@@ -163,6 +164,11 @@ class PropertyService {
       };
     }
 
+    // Add electricity settings if provided
+    if (electricitySettings) {
+      propertyData.electricitySettings = electricitySettings;
+    }
+
     batch.set(propertyRef, propertyData);
     await batch.commit();
 
@@ -176,7 +182,7 @@ class PropertyService {
     };
   }
 
-  async updateProperty(id, { propertyName, units, caretaker, owner, waterMeterSettings, agencyCommission }) {
+  async updateProperty(id, { propertyName, units, caretaker, owner, waterMeterSettings, electricitySettings, agencyCommission }) {
     const start = Date.now();
     const propertyRef = doc(db, 'properties', id);
     const propertySnap = await getDoc(propertyRef);
@@ -246,6 +252,11 @@ class PropertyService {
         meterType: waterMeterSettings.meterType,
         costPerUnit: waterMeterSettings.meterType === 'individual' ? (waterMeterSettings.costPerUnit || 0) : null,
       };
+    }
+
+    // Add electricity settings if provided
+    if (electricitySettings) {
+      propertyUpdateData.electricitySettings = electricitySettings;
     }
 
     batch.set(propertyRef, propertyUpdateData, { merge: true });
