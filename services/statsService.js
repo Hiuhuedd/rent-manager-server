@@ -166,6 +166,9 @@ class StatsService {
         const unitData = unitSnap.data();
         const tenantData = tenantMap.get(unitData.tenantId);
 
+        const unitId = String(unitData.unitId || '').trim();
+        const docId = String(unitSnap.id).trim();
+
         const moveInDate = toJsDate(tenantData?.moveInDate);
         const moveOutDate = toJsDate(tenantData?.moveOutDate);
 
@@ -182,8 +185,7 @@ class StatsService {
         let waterRevenue = 0;
 
         if (waterMeterType === 'individual') {
-          const unitId = String(unitData.unitId || '').trim();
-          const docId = String(unitSnap.id).trim();
+          // unitId and docId are already defined above
 
           if (unitId && waterBillsMap.has(unitId)) {
             waterRevenue = waterBillsMap.get(unitId);
@@ -200,8 +202,7 @@ class StatsService {
 
         // Electricity Revenue
         let electricityRevenue = 0;
-        const unitId = String(unitData.unitId || '').trim();
-        const docId = String(unitSnap.id).trim();
+        // reuse unitId and docId from above
 
         if (elecBillsMap.has(unitId)) {
           electricityRevenue = elecBillsMap.get(unitId);

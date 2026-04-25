@@ -46,6 +46,7 @@ class PropertyService {
           utilityFees: {
             garbageFee: data.utilityFees?.garbageFee || 0,
             waterBill: data.utilityFees?.waterBill || 0,
+            electricityBill: data.utilityFees?.electricityBill || 0,
           },
           waterMeterReading: data.waterMeterReading || 0,
           waterMeterReadings: data.waterMeterReadings || [],
