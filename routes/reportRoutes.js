@@ -8,6 +8,7 @@ const { asyncHandler } = require('../middleware/errorHandler');
 
 router.get('/property/:propertyId/month/:month', asyncHandler(reportController.generatePropertyReport));
 router.get('/property/:propertyId/month/:month/pdf', asyncHandler(reportController.downloadReportPdf));
+router.get('/portfolio/month/:month', asyncHandler(reportController.generatePortfolioReport));
 router.get('/portfolio/month/:month/pdf', asyncHandler(reportController.downloadPortfolioReportPdf));
 router.get('/tenant/:tenantId', asyncHandler(reportController.getTenantStatement));
 router.get('/tenant/:tenantId/pdf', asyncHandler(reportController.downloadTenantStatementPdf));

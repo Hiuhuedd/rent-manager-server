@@ -21,6 +21,20 @@ class ReportController {
     res.json(createSuccessResponse(report));
   }
 
+  generatePortfolioReport = async (req, res) => {
+    const { month } = req.params;
+
+    if (!month) {
+      return res.status(400).json({
+        success: false,
+        error: 'Month (YYYY-MM) is required'
+      });
+    }
+
+    const report = await reportService.generatePortfolioReport(month);
+    res.json(createSuccessResponse(report));
+  }
+
   getTenantStatement = async (req, res) => {
     const { tenantId } = req.params;
 
