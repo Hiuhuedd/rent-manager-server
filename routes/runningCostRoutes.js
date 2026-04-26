@@ -7,9 +7,11 @@ const runningCostController = require('../controllers/runningCostController');
 const { asyncHandler } = require('../middleware/errorHandler');
 
 router.post('/', asyncHandler(runningCostController.addCost));
+router.get('/', asyncHandler(runningCostController.getAllCosts));
 router.get('/property/:propertyId', asyncHandler(runningCostController.getCostsByProperty));
 router.get('/property/:propertyId/month/:month', asyncHandler(runningCostController.getCostsByPropertyAndMonth));
 router.get('/property/:propertyId/month/:month/total', asyncHandler(runningCostController.getTotalCostsByMonth));
+router.put('/:id', asyncHandler(runningCostController.updateCost));
 router.delete('/:id', asyncHandler(runningCostController.deleteCost));
 
 module.exports = router;

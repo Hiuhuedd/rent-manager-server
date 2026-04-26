@@ -34,10 +34,30 @@ class RunningCostController {
         res.json(createSuccessResponse({ costs }));
     }
 
+    async getAllCosts(req, res) {
+        const costs = await runningCostService.getAllCosts();
+        res.json(createSuccessResponse({ costs }));
+    }
+
     async getCostsByPropertyAndMonth(req, res) {
         const { propertyId, month } = req.params;
         const costs = await runningCostService.getCostsByPropertyAndMonth(propertyId, month);
         res.json(createSuccessResponse({ costs }));
+    }
+
+    async updateCost(req, res) {
+        const { id } = req.params;
+        const updates = req.body;
+
+        try {
+            const result = await runningCostService.updateCost(id, updates);
+            res.json(createSuccessResponse(result, 'Cost updated successfully'));
+        } catch (error) {
+            res.status(404).json({
+                success: false,
+                error: error.message
+            });
+        }
     }
 
     async deleteCost(req, res) {

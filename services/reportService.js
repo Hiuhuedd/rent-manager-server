@@ -103,6 +103,21 @@ class ReportService {
         }
         console.log(`[ReportService] Fetched water bills for ${Object.keys(waterBillMap).length} units.`);
 
+        // A4. Fetch Electricity Bills for this month
+        const electricityBillDocRef = doc(db, 'electricity_bills', `${propertyId}_${month}`);
+        const electricityBillSnap = await getDoc(electricityBillDocRef);
+        const electricityBillMap = {};
+        if (electricityBillSnap.exists()) {
+            const ebData = electricityBillSnap.data();
+            if (ebData.bills) {
+                ebData.bills.forEach(bill => {
+                    electricityBillMap[bill.unitId] = parseFloat(bill.totalBill) || 0;
+                    if (bill.unitCode) electricityBillMap[bill.unitCode] = parseFloat(bill.totalBill) || 0;
+                });
+            }
+        }
+        console.log(`[ReportService] Fetched electricity bills for ${Object.keys(electricityBillMap).length} units.`);
+
         // B. Fetch all financial records for the month
         const paymentsQuery = query(
             collection(db, 'financial_records'),
@@ -151,6 +166,7 @@ class ReportService {
             const monthlyRent = unitInfo.rentAmount || parseFloat(tenant.rentAmount) || 0;
             const garbageFee = unitInfo.garbageFee || parseFloat(tenant.utilityFees?.garbageFee) || 0;
             const waterBill = waterBillMap[tenant.unitId] || waterBillMap[tenant.unitCode] || 0;
+            const electricityBill = electricityBillMap[tenant.unitId] || electricityBillMap[tenant.unitCode] || 0;
 
             // Deposit Logic: Only include if tenant moved in this month AND deposit is pending
             const deposit = parseFloat(unitInfo.depositAmount || tenant.rentDeposit?.amount) || 0;
@@ -158,13 +174,13 @@ class ReportService {
             const depositPending = tenant.rentDeposit?.status === DEPOSIT_STATUS.PENDING;
             const includeDeposit = isNewTenant && depositPending && deposit > 0;
 
-            const expectedAmount = monthlyRent + garbageFee + waterBill + (includeDeposit ? deposit : 0);
+            const expectedAmount = monthlyRent + garbageFee + waterBill + electricityBill + (includeDeposit ? deposit : 0);
 
             // Calculate Rent Portion of Paid Amount for Commission
             // Logic: Payment covers (1) Deposit (2) Utilities (3) Rent
             let remainingForRent = amountPaid;
             if (includeDeposit) remainingForRent = Math.max(0, remainingForRent - deposit);
-            remainingForRent = Math.max(0, remainingForRent - (garbageFee + waterBill));
+            remainingForRent = Math.max(0, remainingForRent - (garbageFee + waterBill + electricityBill));
 
             // We only commission up to the monthly rent amount
             const allocatedRent = Math.min(monthlyRent, remainingForRent);
@@ -190,7 +206,12 @@ class ReportService {
                 amountPaid,
                 unpaidAmount: Math.max(0, expectedAmount - amountPaid),
                 status,
-                paymentDate: lastPaymentDate || '-'
+                paymentDate: lastPaymentDate || '-',
+                utilityFees: {
+                    garbageFee,
+                    waterBill,
+                    electricityBill
+                }
             };
         });
 

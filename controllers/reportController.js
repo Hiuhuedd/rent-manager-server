@@ -317,25 +317,37 @@ class ReportController {
                   <table>
                     <thead>
                       <tr>
-                        <th style="width: 10%;">Unit</th>
-                        <th style="width: 35%;">Tenant</th>
-                        <th style="width: 15%;">Expected</th>
-                        <th style="width: 20%; text-align: right;">Paid</th>
-                        <th style="width: 20%; text-align: right;">Unpaid</th>
+                        <th style="width: 8%;">Unit</th>
+                        <th style="width: 22%;">Tenant</th>
+                        <th style="width: 12%; text-align: right;">Rent</th>
+                        <th style="width: 10%; text-align: right;">Water</th>
+                        <th style="width: 10%; text-align: right;">Garb.</th>
+                        <th style="width: 10%; text-align: right;">Elec.</th>
+                        <th style="width: 14%; text-align: right;">Paid</th>
+                        <th style="width: 14%; text-align: right;">Unpaid</th>
                       </tr>
                     </thead>
                     <tbody>
-                      ${tenants.map(t => `
+                      ${tenants.map(t => {
+      const water = t.utilityFees?.waterBill || 0;
+      const garbage = t.utilityFees?.garbageFee || 0;
+      const electricity = t.utilityFees?.electricityBill || 0;
+      const rent = (t.expectedAmount || 0) - water - garbage - electricity;
+
+      return `
                         <tr>
                           <td>${t.unitName}</td>
                           <td>${t.tenantName}</td>
-                          <td>${t.expectedAmount ? t.expectedAmount.toLocaleString() : '0'}</td>
+                          <td style="text-align: right;">${rent.toLocaleString()}</td>
+                          <td style="text-align: right;">${water.toLocaleString()}</td>
+                          <td style="text-align: right;">${garbage.toLocaleString()}</td>
+                          <td style="text-align: right;">${electricity.toLocaleString()}</td>
                           <td style="text-align: right;">${t.amountPaid ? t.amountPaid.toLocaleString() : '0'}</td>
                           <td style="text-align: right; color: ${t.unpaidAmount > 0 ? '#c53030' : '#1f8b24'}; font-weight: bold;">
                             ${t.unpaidAmount ? t.unpaidAmount.toLocaleString() : '0'}
                           </td>
                         </tr>
-                      `).join('')}
+                      `}).join('')}
                     </tbody>
                   </table>
                 </div>

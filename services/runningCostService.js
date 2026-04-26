@@ -112,6 +112,56 @@ class RunningCostService {
     }
 
     /**
+     * Update an existing running cost
+     */
+    async updateCost(costId, updates) {
+        const { db } = require('../config/firebase');
+        const { updateDoc } = require('firebase/firestore');
+
+        const costRef = doc(db, 'runningCosts', costId);
+
+        // Sanitize updates
+        const filteredUpdates = {};
+        if (updates.category) filteredUpdates.category = updates.category;
+        if (updates.feeName) filteredUpdates.feeName = updates.feeName;
+        if (updates.amount) filteredUpdates.amount = parseFloat(updates.amount) || 0;
+        if (updates.description !== undefined) filteredUpdates.description = updates.description;
+        if (updates.date) filteredUpdates.date = new Date(updates.date);
+
+        filteredUpdates.updatedAt = serverTimestamp();
+
+        await updateDoc(costRef, filteredUpdates);
+        console.log(`[SUCCESS] Running cost updated: ${costId}`);
+
+        return { id: costId, ...filteredUpdates };
+    }
+
+    /**
+     * Get all costs (global list)
+     */
+    async getAllCosts() {
+        const q = query(
+            collection(db, 'runningCosts'),
+            orderBy('date', 'desc')
+        );
+
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => {
+            const data = doc.data();
+            let dateObj = null;
+            if (data.date) {
+                dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+            }
+            return {
+                id: doc.id,
+                ...data,
+                date: dateObj,
+                createdAt: data.createdAt?.toDate?.() || null,
+            };
+        });
+    }
+
+    /**
      * Get total costs for a property in a month (aggregated)
      */
     async getTotalCostsByMonth(propertyId, month) {

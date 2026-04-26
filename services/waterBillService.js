@@ -139,6 +139,8 @@ class WaterBillService {
                 console.warn(`[REVENUE] Failed to fetch electricity bills for revenue recalculation:`, e.message);
             }
 
+            // Calculate total water bills for this month from the bills we just saved
+            const totalWaterBills = bills.reduce((sum, bill) => sum + (parseFloat(bill.totalBill) || 0), 0);
             const totalRevenue = totalRent + totalGarbage + totalWaterBills + totalElectricityBills;
 
             await setDoc(propertyRef, {
