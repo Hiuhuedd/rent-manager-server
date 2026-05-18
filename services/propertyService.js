@@ -243,6 +243,9 @@ class PropertyService {
       propertyData.owner = {
         name: owner.name || '',
       };
+      if (owner.id) {
+        propertyData.ownerId = owner.id;
+      }
     }
 
     // Add water meter settings if provided
@@ -370,6 +373,9 @@ class PropertyService {
       propertyUpdateData.owner = {
         name: owner.name || '',
       };
+      if (owner.id) {
+        propertyUpdateData.ownerId = owner.id;
+      }
     }
 
     // Add water meter settings if provided
