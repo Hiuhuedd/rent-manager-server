@@ -5,6 +5,8 @@ const axios = require('axios');
 const { db } = require('../config/firebase');
 const { doc, getDoc, setDoc, updateDoc } = require('firebase/firestore');
 const smsQuotaService = require('./smsQuotaService');
+const smsService = require('./smsService');
+const emailService = require('./emailService');
 
 // Daraja M-Pesa Credentials provided by user
 const DARAJA_CONSUMER_KEY = 'ogNIHgP7LRN2LjGuKb7ShvCGM6xUHuKubEiiGnmddnNwl7CF';
@@ -228,6 +230,162 @@ class MpesaService {
             'subscription.unitsLimit': unitsLimit
           });
           console.log(`🎉 Success: Subscription Plan '${checkout.planId}' successfully activated for Agency ${checkout.agencyId}`);
+        }
+
+        // 3. Dispatch confirmation SMS receipt, thank you SMS, and Receipt Email
+        try {
+          const agencySnap = await getDoc(agencyRef);
+          const agencyData = agencySnap.exists() ? agencySnap.data() : {};
+
+          // Fetch Admin User details for SMS/Email
+          let recipientEmail = agencyData.email || '';
+          let recipientName = agencyData.name || 'Valued Partner';
+          let recipientPhone = payerPhone || checkout.phone || agencyData.phone || '';
+
+          const { query, collection, where, getDocs } = require('firebase/firestore');
+          const usersQ = query(
+            collection(db, 'users'),
+            where('agencyId', '==', checkout.agencyId),
+            where('role', '==', 'admin')
+          );
+          const usersSnap = await getDocs(usersQ);
+          if (usersSnap.docs.length > 0) {
+            const adminData = usersSnap.docs[0].data();
+            if (adminData.email) recipientEmail = adminData.email;
+            if (adminData.name) recipientName = adminData.name;
+            if (adminData.phone) recipientPhone = adminData.phone;
+          }
+
+          // Ensure recipientPhone is formatted correctly for SMS dispatch
+          let smsTargetPhone = recipientPhone.trim().replace(/\+/g, '');
+          if (smsTargetPhone.startsWith('0')) {
+            smsTargetPhone = '254' + smsTargetPhone.substring(1);
+          } else if (smsTargetPhone.startsWith('7') || smsTargetPhone.startsWith('1')) {
+            smsTargetPhone = '254' + smsTargetPhone;
+          }
+
+          let planName = 'Starter Plan';
+          if (checkout.planId === 'growth') planName = 'Growth Plan';
+          else if (checkout.planId === 'professional') planName = 'Professional Plan';
+
+          let receiptMsg = '';
+          let thankYouMsg = '';
+          let emailHtml = '';
+          let emailSubject = '';
+
+          if (checkout.type === 'subscription') {
+            const propertiesLimit = checkout.planId === 'growth' ? 150 : (checkout.planId === 'professional' ? 500 : 75);
+            const unitsLimit = checkout.planId === 'growth' ? 2500 : (checkout.planId === 'professional' ? 10000 : 800);
+            const smsLimit = checkout.planId === 'growth' ? 5000 : (checkout.planId === 'professional' ? 15000 : 1500);
+
+            receiptMsg = `KodiPay Payment Confirmed!\nReceipt No: ${mpesaReceiptNumber}\nAmount: KSh ${paidAmount}\nPlan: ${planName}\nStatus: Activated successfully.\nThank you for choosing KodiPay.`;
+            
+            thankYouMsg = `Hi ${recipientName}, thank you for subscribing to KodiPay ${planName}! Your agency limits have been successfully upgraded (Properties: ${propertiesLimit}, Units: ${unitsLimit}, SMS: ${smsLimit}). We are thrilled to partner with you!`;
+
+            emailSubject = `Payment Confirmed & Plan Activated - KodiPay`;
+            emailHtml = `
+              <div style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: auto; padding: 40px; background-color: #ffffff; border: 1px solid #f0f0f0; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.02);">
+                <div style="text-align: center; margin-bottom: 32px;">
+                  <div style="display: inline-block; width: 56px; height: 56px; background-color: #0f172a; border-radius: 16px; line-height: 56px; color: white; font-size: 24px; font-weight: bold; text-align: center;">K</div>
+                </div>
+                <h2 style="color: #0f172a; text-align: center; font-size: 22px; font-weight: 800; margin-bottom: 8px; tracking: -0.02em;">Payment Receipt</h2>
+                <p style="color: #64748b; text-align: center; font-size: 14px; line-height: 1.6; margin-bottom: 32px;">Hi ${recipientName}, thank you for your payment. Your KodiPay subscription plan has been successfully activated.</p>
+                
+                <div style="background: #f8fafc; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; margin-bottom: 32px;">
+                  <h3 style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin: 0 0 16px 0;">Transaction Details</h3>
+                  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">Plan Selected</td>
+                      <td style="padding: 8px 0; color: #0f172a; font-weight: 700; text-align: right;">${planName}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">Amount Paid</td>
+                      <td style="padding: 8px 0; color: #16a34a; font-weight: 800; text-align: right;">KSh ${parseFloat(paidAmount).toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">M-Pesa Receipt Number</td>
+                      <td style="padding: 8px 0; color: #0f172a; font-weight: 700; text-align: right; font-family: monospace;">${mpesaReceiptNumber}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">Account Limits</td>
+                      <td style="padding: 8px 0; color: #0f172a; font-weight: 700; text-align: right;">${propertiesLimit} Properties / ${unitsLimit} Units</td>
+                    </tr>
+                  </table>
+                </div>
+
+                <div style="text-align: center; margin-bottom: 32px;">
+                  <a href="https://rent-manager-server.onrender.com" style="display: inline-block; padding: 14px 32px; background-color: #007aff; color: white; text-decoration: none; border-radius: 12px; font-weight: 600; font-size: 13px; box-shadow: 0 4px 12px rgba(0,122,255,0.2);">Go to Dashboard</a>
+                </div>
+                
+                <p style="color: #64748b; font-size: 13px; line-height: 1.6; text-align: center;">We are thrilled to partner with you. Let's make property management simple and stress-free!</p>
+                <div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
+                  <p style="font-size: 11px; color: #94a3b8;">&copy; 2026 KodiPay Inc. All rights reserved.</p>
+                </div>
+              </div>
+            `;
+          } else {
+            // SMS Topup Bundle
+            receiptMsg = `KodiPay Payment Confirmed!\nReceipt No: ${mpesaReceiptNumber}\nAmount: KSh ${paidAmount}\nBundle: ${checkout.units} SMS Messages\nStatus: Credited successfully.\nThank you for choosing KodiPay.`;
+            
+            thankYouMsg = `Hi ${recipientName}, thank you for topping up your SMS units! ${checkout.units} SMS messages have been successfully added to your KodiPay balance. Happy messaging!`;
+
+            emailSubject = `SMS Bundle Topup Confirmed - KodiPay`;
+            emailHtml = `
+              <div style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: auto; padding: 40px; background-color: #ffffff; border: 1px solid #f0f0f0; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.02);">
+                <div style="text-align: center; margin-bottom: 32px;">
+                  <div style="display: inline-block; width: 56px; height: 56px; background-color: #0f172a; border-radius: 16px; line-height: 56px; color: white; font-size: 24px; font-weight: bold; text-align: center;">K</div>
+                </div>
+                <h2 style="color: #0f172a; text-align: center; font-size: 22px; font-weight: 800; margin-bottom: 8px; tracking: -0.02em;">Payment Receipt</h2>
+                <p style="color: #64748b; text-align: center; font-size: 14px; line-height: 1.6; margin-bottom: 32px;">Hi ${recipientName}, thank you for your payment. Your SMS bundle has been credited to your balance.</p>
+                
+                <div style="background: #f8fafc; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; margin-bottom: 32px;">
+                  <h3 style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin: 0 0 16px 0;">Transaction Details</h3>
+                  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">Bundle Purchased</td>
+                      <td style="padding: 8px 0; color: #0f172a; font-weight: 700; text-align: right;">${checkout.units} SMS Messages</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">Amount Paid</td>
+                      <td style="padding: 8px 0; color: #16a34a; font-weight: 800; text-align: right;">KSh ${parseFloat(paidAmount).toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; color: #64748b; font-weight: 500;">M-Pesa Receipt Number</td>
+                      <td style="padding: 8px 0; color: #0f172a; font-weight: 700; text-align: right; font-family: monospace;">${mpesaReceiptNumber}</td>
+                    </tr>
+                  </table>
+                </div>
+
+                <div style="text-align: center; margin-bottom: 32px;">
+                  <a href="https://rent-manager-server.onrender.com" style="display: inline-block; padding: 14px 32px; background-color: #007aff; color: white; text-decoration: none; border-radius: 12px; font-weight: 600; font-size: 13px; box-shadow: 0 4px 12px rgba(0,122,255,0.2);">Go to Dashboard</a>
+                </div>
+                
+                <div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
+                  <p style="font-size: 11px; color: #94a3b8;">&copy; 2026 KodiPay Inc. All rights reserved.</p>
+                </div>
+              </div>
+            `;
+          }
+
+          // 1. Send SMS 1: Receipt SMS
+          if (smsTargetPhone) {
+            console.log(`💬 Dispatching Receipt SMS to ${smsTargetPhone}...`);
+            await smsService.sendSMS(smsTargetPhone, receiptMsg, checkout.agencyId, 'system');
+          }
+
+          // 2. Send SMS 2: Thank you / Welcome SMS
+          if (smsTargetPhone) {
+            console.log(`💬 Dispatching Thank-You SMS to ${smsTargetPhone}...`);
+            await smsService.sendSMS(smsTargetPhone, thankYouMsg, checkout.agencyId, 'system');
+          }
+
+          // 3. Send Confirmation Email
+          if (recipientEmail) {
+            console.log(`📧 Dispatching Receipt Email to ${recipientEmail}...`);
+            await emailService.sendEmail(recipientEmail, emailSubject, emailHtml);
+          }
+        } catch (notifyErr) {
+          console.error('❌ Failed to dispatch payment receipt notifications:', notifyErr.message);
         }
 
         return { success: true, message: 'Payment successfully captured and plan provisioned' };
