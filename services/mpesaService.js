@@ -74,6 +74,11 @@ class MpesaService {
       // or RENDER_EXTERNAL_URL (automatically populated by Render for your Web Service).
       let baseUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || callbackBaseUrl;
       
+      // If running locally without a tunnel, fall back to your live Render backend so Safaricom's validation passes
+      if (!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+        baseUrl = 'https://rent-manager-server.onrender.com';
+      }
+      
       // Clean trailing slashes if present
       if (baseUrl && baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
