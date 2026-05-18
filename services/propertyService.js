@@ -148,7 +148,7 @@ class PropertyService {
   /**
    * Create a new property + units with proper createdAt timestamps
    */
-  async createProperty(agencyId, userUid, { propertyName, address, units, caretaker, owner, waterMeterSettings, electricitySettings }) {
+  async createProperty(agencyId, userUid, { propertyName, address, units, caretaker, owner, agencyCommission, waterMeterSettings, electricitySettings }) {
     const start = Date.now();
     
     // 1. Fetch Subscription Limits
@@ -226,7 +226,7 @@ class PropertyService {
       propertyRevenueTotal: totalRevenue,
       propertyUnitIds,
       propertyVacantUnits: units.length,
-      agencyCommission: 8,
+      agencyCommission: agencyCommission !== undefined ? parseFloat(agencyCommission) : 8,
       createdAt: now,
     };
 
