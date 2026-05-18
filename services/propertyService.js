@@ -245,6 +245,52 @@ class PropertyService {
       };
       if (owner.id) {
         propertyData.ownerId = owner.id;
+      } else {
+        // Automatically create a client from the owner details!
+        try {
+          let existingClientId = null;
+          const clientsRef = collection(db, 'clients');
+          const q = query(
+            clientsRef,
+            where('agencyId', '==', agencyId),
+            where('name', '==', owner.name)
+          );
+          const querySnap = await getDocs(q);
+          if (!querySnap.empty) {
+            existingClientId = querySnap.docs[0].id;
+          }
+
+          if (existingClientId) {
+            propertyData.ownerId = existingClientId;
+          } else {
+            // Create a new client!
+            const newClientRef = doc(collection(db, 'clients'));
+            const payoutMethod = owner.bankDetails?.mpesaNumber ? 'mpesa' : 'bank';
+            const payoutDetails = payoutMethod === 'mpesa' 
+              ? (owner.bankDetails?.mpesaNumber || owner.phone || '')
+              : (owner.bankDetails?.bankName && owner.bankDetails?.accountNumber 
+                 ? `${owner.bankDetails.bankName} - Account ${owner.bankDetails.accountNumber}`
+                 : (owner.bankDetails?.accountNumber || ''));
+
+            const newClient = {
+              agencyId,
+              name: owner.name,
+              email: owner.email || '',
+              phone: owner.phone || '',
+              commissionRate: parseFloat(agencyCommission) || 10,
+              payoutMethod,
+              payoutDetails,
+              notes: `Auto-created during property registration of ${propertyName}`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+
+            await setDoc(newClientRef, newClient);
+            propertyData.ownerId = newClientRef.id;
+          }
+        } catch (clientErr) {
+          console.error('❌ Failed to auto-create client in createProperty:', clientErr);
+        }
       }
     }
 
@@ -375,6 +421,52 @@ class PropertyService {
       };
       if (owner.id) {
         propertyUpdateData.ownerId = owner.id;
+      } else {
+        // Automatically create a client from the owner details!
+        try {
+          let existingClientId = null;
+          const clientsRef = collection(db, 'clients');
+          const q = query(
+            clientsRef,
+            where('agencyId', '==', oldAgencyId),
+            where('name', '==', owner.name)
+          );
+          const querySnap = await getDocs(q);
+          if (!querySnap.empty) {
+            existingClientId = querySnap.docs[0].id;
+          }
+
+          if (existingClientId) {
+            propertyUpdateData.ownerId = existingClientId;
+          } else {
+            // Create a new client!
+            const newClientRef = doc(collection(db, 'clients'));
+            const payoutMethod = owner.bankDetails?.mpesaNumber ? 'mpesa' : 'bank';
+            const payoutDetails = payoutMethod === 'mpesa' 
+              ? (owner.bankDetails?.mpesaNumber || owner.phone || '')
+              : (owner.bankDetails?.bankName && owner.bankDetails?.accountNumber 
+                 ? `${owner.bankDetails.bankName} - Account ${owner.bankDetails.accountNumber}`
+                 : (owner.bankDetails?.accountNumber || ''));
+
+            const newClient = {
+              agencyId: oldAgencyId,
+              name: owner.name,
+              email: owner.email || '',
+              phone: owner.phone || '',
+              commissionRate: parseFloat(agencyCommission) || 10,
+              payoutMethod,
+              payoutDetails,
+              notes: `Auto-created during property settings update of ${propertyName || 'property'}`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+
+            await setDoc(newClientRef, newClient);
+            propertyUpdateData.ownerId = newClientRef.id;
+          }
+        } catch (clientErr) {
+          console.error('❌ Failed to auto-create client in updateProperty:', clientErr);
+        }
       }
     }
 
