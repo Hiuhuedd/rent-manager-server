@@ -5,6 +5,7 @@ const { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, query, w
 const { authMiddleware } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/errorHandler');
 const emailService = require('../services/emailService');
+const smsService = require('../services/smsService');
 
 router.use(authMiddleware);
 
@@ -374,9 +375,27 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
         </div>
       `;
       await emailService.sendEmail(client.email, emailSubject, emailHtml);
+      console.log(`📧 Payout email receipt successfully sent to landlord ${client.email}`);
     } catch (mailErr) {
       console.error('❌ Failed to email client payout receipt:', mailErr.message);
     }
+  } else {
+    console.log(`⚠️ Skip payout email receipt: landlord has no registered email address`);
+  }
+
+  // Send SMS confirmation to client
+  if (client.phone) {
+    try {
+      const formattedAmount = new Intl.NumberFormat('en-KE').format(payoutAmount);
+      const smsMessage = `KodiPay: Payout Confirmed! KSh ${formattedAmount} has been disbursed to you for ${payoutMonth || 'All-Time'} via ${paymentMethod.toUpperCase()}.${referenceNumber ? ` Ref: ${referenceNumber}.` : ''} Thank you!`;
+      
+      const smsResult = await smsService.sendSMS(client.phone, smsMessage, agencyId, 'system', id);
+      console.log(`📱 Payout SMS notification response for ${client.phone}:`, smsResult);
+    } catch (smsErr) {
+      console.error('❌ Failed to send SMS payout notification to landlord:', smsErr.message);
+    }
+  } else {
+    console.log(`⚠️ Skip payout SMS: landlord has no registered phone number`);
   }
 
   res.json({ success: true, data: { id: docRef.id, ...newPayout }, message: 'Payout recorded successfully' });
