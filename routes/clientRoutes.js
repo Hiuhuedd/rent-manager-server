@@ -32,24 +32,42 @@ router.get('/', asyncHandler(async (req, res) => {
   const payoutsSnap = await getDocs(payoutsQ);
   const payoutsList = payoutsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
+  // 5. Fetch all running costs (expenses)
+  const costsQ = query(collection(db, 'runningCosts'), where('agencyId', '==', agencyId));
+  const costsSnap = await getDocs(costsQ);
+  const costsList = costsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
   // Calculate dynamic aggregates per client
   const enrichedClients = clientsList.map(client => {
     const clientProperties = propsList.filter(p => p.ownerId === client.id || (p.owner && p.owner.name === client.name));
     const propertyIds = clientProperties.map(p => p.propertyId || p.id);
 
-    // Sum all rent payments collected for these properties
+    // Sum rent payments and compute property-specific commissions
     const propertyPayments = finRecords.filter(r => propertyIds.includes(r.propertyId));
-    const totalCollected = propertyPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    
+    let totalCollected = 0;
+    let totalCommission = 0;
 
-    // Commission
-    const rate = parseFloat(client.commissionRate) || 0;
-    const totalCommission = totalCollected * (rate / 100);
-    const netPayoutDue = totalCollected - totalCommission;
+    clientProperties.forEach(p => {
+      const propPayments = propertyPayments.filter(r => r.propertyId === p.id);
+      const propCollected = propPayments.reduce((sum, pay) => sum + (pay.amount || 0), 0);
+      totalCollected += propCollected;
 
-    // Total Paid Payouts
+      // Property specific commission rate (default to 8%)
+      const rate = p.agencyCommission !== undefined ? parseFloat(p.agencyCommission) : 8;
+      totalCommission += propCollected * (rate / 100);
+    });
+
+    // Sum running costs / expenses for these properties
+    const clientCosts = costsList.filter(c => propertyIds.includes(c.propertyId));
+    const totalExpenses = clientCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+
+    // Sum recorded payouts
     const clientPayouts = payoutsList.filter(p => p.clientId === client.id);
     const totalPaid = clientPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
 
+    // Net payout due = Collected - Commission - Expenses
+    const netPayoutDue = totalCollected - totalCommission - totalExpenses;
     const outstanding = Math.max(0, netPayoutDue - totalPaid);
 
     return {
@@ -58,6 +76,7 @@ router.get('/', asyncHandler(async (req, res) => {
       properties: clientProperties.map(p => ({ id: p.id, name: p.propertyName })),
       totalCollected,
       totalCommission,
+      totalExpenses,
       netPayoutDue,
       totalPaid,
       outstandingPayout: outstanding,
@@ -66,6 +85,111 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 
   res.json({ success: true, data: enrichedClients });
+}));
+
+// GET single client + stats + properties + payouts + expenses
+router.get('/:id', asyncHandler(async (req, res) => {
+  const { agencyId } = req.user;
+  const { id } = req.params;
+
+  const clientRef = doc(db, 'clients', id);
+  const clientSnap = await getDoc(clientRef);
+
+  if (!clientSnap.exists() || clientSnap.data().agencyId !== agencyId) {
+    return res.status(404).json({ success: false, error: 'Client not found' });
+  }
+
+  const client = { id: clientSnap.id, ...clientSnap.data() };
+
+  // Fetch client properties
+  const propsQ = query(collection(db, 'properties'), where('ownerId', '==', id), where('agencyId', '==', agencyId));
+  const propsSnap = await getDocs(propsQ);
+  const clientProperties = propsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const propertyIds = clientProperties.map(p => p.id);
+
+  // Fetch financial records (payments)
+  let propertyPayments = [];
+  let totalCollected = 0;
+  let totalCommission = 0;
+
+  if (propertyIds.length > 0) {
+    const finQ = query(collection(db, 'financial_records'), where('agencyId', '==', agencyId));
+    const finSnap = await getDocs(finQ);
+    const finRecords = finSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    propertyPayments = finRecords.filter(r => propertyIds.includes(r.propertyId));
+    
+    // Group and calculate commission dynamically per property
+    clientProperties.forEach(p => {
+      const propPayments = propertyPayments.filter(r => r.propertyId === p.id);
+      const propCollected = propPayments.reduce((sum, pay) => sum + (pay.amount || 0), 0);
+      totalCollected += propCollected;
+
+      const rate = p.agencyCommission !== undefined ? parseFloat(p.agencyCommission) : 8;
+      totalCommission += propCollected * (rate / 100);
+    });
+  }
+
+  // Fetch payouts recorded
+  const payoutsQ = query(collection(db, 'payouts'), where('clientId', '==', id), where('agencyId', '==', agencyId));
+  const payoutsSnap = await getDocs(payoutsQ);
+  const clientPayouts = payoutsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const totalPaid = clientPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  // Fetch expenses (running costs)
+  let clientExpenses = [];
+  let totalExpenses = 0;
+
+  if (propertyIds.length > 0) {
+    const costsQ = query(collection(db, 'runningCosts'), where('agencyId', '==', agencyId));
+    const costsSnap = await getDocs(costsQ);
+    const costsRecords = costsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
+    clientExpenses = costsRecords.filter(c => propertyIds.includes(c.propertyId));
+    totalExpenses = clientExpenses.reduce((sum, cost) => sum + (cost.amount || 0), 0);
+  }
+
+  // Calculate Net payout due = Collected - Commission - Expenses
+  const netPayoutDue = totalCollected - totalCommission - totalExpenses;
+  const outstanding = Math.max(0, netPayoutDue - totalPaid);
+
+  res.json({
+    success: true,
+    data: {
+      ...client,
+      properties: clientProperties.map(p => ({ 
+        id: p.id, 
+        name: p.propertyName, 
+        agencyCommission: p.agencyCommission !== undefined ? p.agencyCommission : 8,
+        unitsCount: p.propertyUnitsTotal || 0
+      })),
+      totalCollected,
+      totalCommission,
+      totalExpenses,
+      totalPaid,
+      outstandingPayout: outstanding,
+      payouts: clientPayouts,
+      expenses: clientExpenses.map(c => ({
+        id: c.id,
+        category: c.category,
+        feeName: c.feeName,
+        amount: c.amount,
+        description: c.description,
+        date: c.date,
+        propertyName: clientProperties.find(p => p.id === c.propertyId)?.propertyName || 'Unknown Property'
+      })).sort((a,b) => new Date(b.date) - new Date(a.date)),
+      payments: propertyPayments.map(p => ({
+        id: p.id,
+        amount: p.amount,
+        type: p.type || 'rent',
+        tenantName: p.tenantName || 'Tenant',
+        unitName: p.unitName || 'Unit',
+        createdAt: p.createdAt,
+        propertyName: clientProperties.find(prop => prop.id === p.propertyId)?.propertyName || 'Unknown Property'
+      })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
+    }
+  });
 }));
 
 // POST create client
