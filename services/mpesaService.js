@@ -70,11 +70,13 @@ class MpesaService {
         formattedPhone = '254' + formattedPhone;
       }
 
-      // Dynamic Callback URL formation. If running locally, we must route to the live production server (https://esenpi.onrender.com)
-      // because Safaricom Daraja strictly rejects 'localhost' or '127.0.0.1' CallBackURLs.
-      let baseUrl = callbackBaseUrl;
-      if (!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
-        baseUrl = 'https://esenpi.onrender.com';
+      // Dynamic Callback URL formation. We prioritize BACKEND_URL (for custom local tunnels e.g., Ngrok)
+      // or RENDER_EXTERNAL_URL (automatically populated by Render for your Web Service).
+      let baseUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || callbackBaseUrl;
+      
+      // Clean trailing slashes if present
+      if (baseUrl && baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
       }
       
       const callbackUrl = `${baseUrl}/api/billing/mpesa-callback`;
