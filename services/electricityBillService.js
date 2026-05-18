@@ -21,11 +21,11 @@ class ElectricityBillService {
      * @param {string} month - Month in YYYY-MM format
      * @param {Array} bills - Array of { unitId, previousReading, currentReading, totalBill }
      */
-    async saveElectricityBills(propertyId, month, bills) {
+    async saveElectricityBills(propertyId, month, bills, agencyId) {
         const start = Date.now();
         const targetMonth = month || getCurrentMonth();
 
-        // Validate property exists
+        // Validate property exists and belongs to agency
         const propertyRef = doc(db, 'properties', propertyId);
         const propertySnap = await getDoc(propertyRef);
 
@@ -34,6 +34,11 @@ class ElectricityBillService {
         }
 
         const propertyData = propertySnap.data();
+        
+        // Security Check
+        if (agencyId && propertyData.agencyId !== agencyId) {
+            throw new Error('Unauthorized: Property belongs to another agency');
+        }
         const elecSettings = propertyData.electricitySettings;
 
         if (!elecSettings || !elecSettings.rate1) {
@@ -218,7 +223,7 @@ class ElectricityBillService {
      * @param {string} propertyId - Property ID
      * @param {string} month - Month in YYYY-MM format
      */
-    async getElectricityBills(propertyId, month) {
+    async getElectricityBills(propertyId, month, agencyId) {
         const targetMonth = month || getCurrentMonth();
         const elecBillRef = doc(db, 'electricity_bills', `${propertyId}_${targetMonth}`);
         const elecBillSnap = await getDoc(elecBillRef);
@@ -233,6 +238,11 @@ class ElectricityBillService {
             }
 
             const propertyData = propertySnap.data();
+            
+            // Security Check
+            if (agencyId && propertyData.agencyId !== agencyId) {
+                throw new Error('Unauthorized: Property belongs to another agency');
+            }
             const unitIds = propertyData.propertyUnitIds || [];
 
             const bills = [];
@@ -269,8 +279,14 @@ class ElectricityBillService {
             };
         }
 
+        // Security Check: Ensure the data we found belongs to the agency
+        const data = elecBillSnap.data();
+        if (agencyId && data.agencyId && data.agencyId !== agencyId) {
+            throw new Error('Unauthorized: Electricity bills belong to another agency');
+        }
+
         return {
-            ...elecBillSnap.data(),
+            ...data,
             exists: true,
         };
     }

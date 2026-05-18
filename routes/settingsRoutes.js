@@ -5,10 +5,15 @@ const express = require('express');
 const router = express.Router();
 const settingsController = require('../controllers/settingsController');
 
+const { authMiddleware } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/errorHandler');
+
+router.use(authMiddleware);
+
 // GET /api/settings - Get application settings
-router.get('/', settingsController.getSettings.bind(settingsController));
+router.get('/', asyncHandler(settingsController.getSettings.bind(settingsController)));
 
 // PUT /api/settings - Update application settings
-router.put('/', settingsController.updateSettings.bind(settingsController));
+router.put('/', asyncHandler(settingsController.updateSettings.bind(settingsController)));
 
 module.exports = router;

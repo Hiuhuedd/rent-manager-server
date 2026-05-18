@@ -19,9 +19,10 @@ class RunningCostService {
     /**
      * Add a new running cost
      */
-    async addCost({ propertyId, category, feeName, amount, description, date, createdBy }) {
+    async addCost({ propertyId, agencyId, category, feeName, amount, description, date, createdBy, unitId, unitName, unitCode }) {
         const costData = {
             propertyId,
+            agencyId,
             category,
             feeName,
             amount: parseFloat(amount) || 0,
@@ -29,6 +30,9 @@ class RunningCostService {
             date: date ? new Date(date) : new Date(),
             createdBy: createdBy || 'system',
             createdAt: serverTimestamp(),
+            unitId: unitId || null,
+            unitName: unitName || null,
+            unitCode: unitCode || null,
         };
 
         const docRef = await addDoc(collection(db, 'runningCosts'), costData);
@@ -44,20 +48,24 @@ class RunningCostService {
     /**
      * Get all costs for a specific property
      */
-    async getCostsByProperty(propertyId) {
+    async getCostsByProperty(propertyId, agencyId) {
         const q = query(
             collection(db, 'runningCosts'),
             where('propertyId', '==', propertyId),
-            orderBy('date', 'desc')
+            where('agencyId', '==', agencyId)
         );
 
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => {
+        const costs = snapshot.docs.map(doc => {
             const data = doc.data();
             let dateObj = null;
             if (data.date) {
-                // Handle Firestore Timestamp or ISO String
-                dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+                try {
+                    dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+                    if (isNaN(dateObj.getTime())) dateObj = null;
+                } catch (e) {
+                    dateObj = null;
+                }
             }
             return {
                 id: doc.id,
@@ -66,31 +74,26 @@ class RunningCostService {
                 createdAt: data.createdAt?.toDate?.() || null,
             };
         });
+
+        // Sort in memory to avoid composite index requirement
+        return costs.sort((a, b) => (b.date || 0) - (a.date || 0));
     }
 
     /**
      * Get costs for a property within a specific month
      */
-    async getCostsByPropertyAndMonth(propertyId, month) {
+    async getCostsByPropertyAndMonth(propertyId, month, agencyId) {
         // month format: YYYY-MM
         const [year, monthNum] = month.split('-').map(Number);
         const startDate = new Date(year, monthNum - 1, 1);
         const endDate = new Date(year, monthNum, 0, 23, 59, 59);
 
-        console.log(`[DEBUG] Report for ${month} (${propertyId})`);
-        console.log(`[DEBUG] Window: ${startDate.toISOString()} to ${endDate.toISOString()}`);
-
-        const allCosts = await this.getCostsByProperty(propertyId);
-        console.log(`[DEBUG] Fetched ${allCosts.length} costs for property`);
+        const allCosts = await this.getCostsByProperty(propertyId, agencyId);
 
         return allCosts.filter(cost => {
             const costDate = cost.date;
-            if (!costDate) {
-                console.log(`[DEBUG] Cost ${cost.id} skipped (no date)`);
-                return false;
-            }
+            if (!costDate) return false;
             const inRange = costDate >= startDate && costDate <= endDate;
-            console.log(`[DEBUG] Cost ${cost.id} (${costDate.toISOString()}): ${inRange ? 'INCLUDE' : 'EXCLUDE'}`);
             return inRange;
         });
     }
@@ -98,12 +101,17 @@ class RunningCostService {
     /**
      * Delete a running cost
      */
-    async deleteCost(costId) {
+    async deleteCost(costId, agencyId) {
         const costRef = doc(db, 'runningCosts', costId);
         const costSnap = await getDoc(costRef);
 
         if (!costSnap.exists()) {
             throw new Error('Cost record not found');
+        }
+        
+        // Security Check
+        if (agencyId && costSnap.data().agencyId !== agencyId) {
+            throw new Error('Unauthorized: Cost record belongs to another agency');
         }
 
         await deleteDoc(costRef);
@@ -139,18 +147,32 @@ class RunningCostService {
     /**
      * Get all costs (global list)
      */
-    async getAllCosts() {
-        const q = query(
-            collection(db, 'runningCosts'),
-            orderBy('date', 'desc')
-        );
+    async getAllCosts(agencyId, assignedProperties = []) {
+        let q;
+        if (assignedProperties.length > 0) {
+            q = query(
+                collection(db, 'runningCosts'),
+                where('agencyId', '==', agencyId),
+                where('propertyId', 'in', assignedProperties)
+            );
+        } else {
+            q = query(
+                collection(db, 'runningCosts'),
+                where('agencyId', '==', agencyId)
+            );
+        }
 
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => {
+        const costs = snapshot.docs.map(doc => {
             const data = doc.data();
             let dateObj = null;
             if (data.date) {
-                dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+                try {
+                    dateObj = data.date.toDate ? data.date.toDate() : new Date(data.date);
+                    if (isNaN(dateObj.getTime())) dateObj = null;
+                } catch (e) {
+                    dateObj = null;
+                }
             }
             return {
                 id: doc.id,
@@ -159,13 +181,17 @@ class RunningCostService {
                 createdAt: data.createdAt?.toDate?.() || null,
             };
         });
+
+        return costs.sort((a, b) => (b.date || 0) - (a.date || 0));
     }
 
     /**
      * Get total costs for a property in a month (aggregated)
      */
-    async getTotalCostsByMonth(propertyId, month) {
-        const costs = await this.getCostsByPropertyAndMonth(propertyId, month);
+    async getTotalCostsByMonth(propertyId, month, agencyId) {
+        const costs = propertyId === 'all' 
+            ? await this.getCostsByMonth(month, agencyId)
+            : await this.getCostsByPropertyAndMonth(propertyId, month, agencyId);
         const totalAmount = costs.reduce((sum, cost) => sum + cost.amount, 0);
 
         // Group by category
@@ -183,6 +209,30 @@ class RunningCostService {
             items: costs,
             itemCount: costs.length,
         };
+    }
+
+    /**
+     * Get costs for all properties within a specific month
+     */
+    async getCostsByMonth(month, agencyId, assignedProperties = []) {
+        const [year, monthNum] = month.split('-').map(Number);
+        const startDate = new Date(year, monthNum - 1, 1);
+        const endDate = new Date(year, monthNum, 0, 23, 59, 59);
+
+        console.log(`[DEBUG] Global costs for ${month}`);
+        console.log(`[DEBUG] Range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+        const allCosts = await this.getAllCosts(agencyId, assignedProperties);
+        console.log(`[DEBUG] Total costs in DB: ${allCosts.length}`);
+
+        const filtered = allCosts.filter(cost => {
+            const costDate = cost.date;
+            if (!costDate) return false;
+            return costDate >= startDate && costDate <= endDate;
+        });
+
+        console.log(`[DEBUG] Filtered costs for ${month}: ${filtered.length}`);
+        return filtered;
     }
 }
 

@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { getFirestoreApp } = require('./firebase');
-const { collection, addDoc } = require('firebase/firestore');
+const { collection, addDoc, doc, setDoc, increment } = require('firebase/firestore');
+const smsQuotaService = require('./services/smsQuotaService');
 
 class SMSService {
   constructor() {
@@ -9,7 +10,7 @@ class SMSService {
     this.config = {
       apiKey: process.env.TEXTSMS_API_KEY,
       partnerID: process.env.TEXTSMS_PARTNER_ID,
-      shortcode: process.env.TEXTSMS_SENDER_ID,
+      shortcode: (process.env.TEXTSMS_SENDER_ID || '').replace(/['"\s]/g, ''),
       apiUrl: 'https://sms.textsms.co.ke/api/services/sendsms/'
     };
     console.log('📋 SMS Service Configuration:');
@@ -298,15 +299,28 @@ class SMSService {
    * Send SMS via TextSMS API
    * @param {string} to - Recipient's phone number
    * @param {string} message - SMS message content
+   * @param {string} agencyId - Agency ID for quota and logging
    * @param {string} userId - User ID for logging
    * @param {string} debtId - Debt/Tenant ID for logging
    * @returns {Promise<Object>} SMS result with success status and messageId
    */
-  async sendSMS(to, message, userId, debtId) {
+  async sendSMS(to, message, agencyId, userId, debtId) {
     console.log('📤 Attempting to send SMS...');
     console.log(`   - To: ${to}`);
-    console.log(`   - Message Length: ${message.length}`);
-    console.log(`   - Message: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
+    console.log(`   - Agency ID: ${agencyId}`);
+    
+    // 1. Calculate units and check quota
+    const units = smsQuotaService.calculateUnits(message);
+    const quotaCheck = await smsQuotaService.checkQuota(agencyId, units);
+
+    if (!quotaCheck.canSend && !quotaCheck.isDefault) {
+      console.error(`❌ SMS Quota Exceeded for ${agencyId}: ${quotaCheck.reason}`);
+      return {
+        success: false,
+        error: quotaCheck.reason,
+        quotaExceeded: true
+      };
+    }
 
     try {
       const formattedPhone = to.startsWith('+254') ? to.replace('+254', '254') :
@@ -314,7 +328,7 @@ class SMSService {
       const formattedMessage = encodeURIComponent(message.trim());
 
       if (message.length > 160) {
-        console.warn(`⚠️ Message length exceeds 160 characters (${message.length}), it will be split into multiple SMS`);
+        console.warn(`⚠️ Message length exceeds 160 characters (${message.length}), it will be split into multiple SMS (${units} units)`);
       }
 
       const response = await axios.post(this.config.apiUrl, {
@@ -329,19 +343,25 @@ class SMSService {
       console.log('📋 TextSMS Response:', result);
 
       await this.logSMS({
+        agencyId,
         userId,
         debtId,
         to,
         message,
+        units,
         success: true,
         messageId: result.responses[0].messageid,
         timestamp: new Date()
       });
 
+      // 2. Increment usage in quota service
+      await smsQuotaService.incrementUsage(agencyId, units);
+
       return {
         success: true,
         messageId: result.responses[0].messageid,
-        data: result.responses[0]
+        data: result.responses[0],
+        units
       };
     } catch (error) {
       console.error('❌ SMS Service Error:', {
@@ -378,9 +398,9 @@ class SMSService {
    */
   async logSMS(smsData) {
     console.log('💾 Logging SMS to Firestore...');
+    console.log(`   - Agency ID: ${smsData.agencyId}`);
     console.log(`   - User ID: ${smsData.userId}`);
-    console.log(`   - Debt ID: ${smsData.debtId}`);
-    console.log(`   - To: ${smsData.to}`);
+    console.log(`   - Units: ${smsData.units}`);
     console.log(`   - Success: ${smsData.success}`);
 
     try {

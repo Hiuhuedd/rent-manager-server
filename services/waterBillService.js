@@ -21,11 +21,11 @@ class WaterBillService {
      * @param {string} month - Month in YYYY-MM format
      * @param {Array} bills - Array of { unitId, previousReading, currentReading, costPerUnit, totalBill }
      */
-    async saveWaterBills(propertyId, month, bills) {
+    async saveWaterBills(propertyId, month, bills, agencyId) {
         const start = Date.now();
         const targetMonth = month || getCurrentMonth();
 
-        // Validate property exists
+        // Validate property exists and belongs to agency
         const propertyRef = doc(db, 'properties', propertyId);
         const propertySnap = await getDoc(propertyRef);
 
@@ -34,6 +34,11 @@ class WaterBillService {
         }
 
         const propertyData = propertySnap.data();
+        
+        // Security Check
+        if (agencyId && propertyData.agencyId !== agencyId) {
+            throw new Error('Unauthorized: Property belongs to another agency');
+        }
         const waterMeterType = propertyData.waterMeterSettings?.meterType || 'single';
 
         if (waterMeterType !== 'individual') {
@@ -277,7 +282,7 @@ class WaterBillService {
      * @param {string} propertyId - Property ID
      * @param {string} month - Month in YYYY-MM format (optional, defaults to current month)
      */
-    async getWaterBills(propertyId, month) {
+    async getWaterBills(propertyId, month, agencyId) {
         const targetMonth = month || getCurrentMonth();
         const waterBillRef = doc(db, 'water_bills', `${propertyId}_${targetMonth}`);
         const waterBillSnap = await getDoc(waterBillRef);
@@ -292,6 +297,11 @@ class WaterBillService {
             }
 
             const propertyData = propertySnap.data();
+            
+            // Security Check
+            if (agencyId && propertyData.agencyId !== agencyId) {
+                throw new Error('Unauthorized: Property belongs to another agency');
+            }
             const unitIds = propertyData.propertyUnitIds || [];
 
             // Fetch all units to get previous readings
@@ -335,6 +345,11 @@ class WaterBillService {
 
         // Enrich with unit names from units collection for legacy records or safety
         const enrichedBills = await Promise.all(data.bills.map(async (bill) => {
+            // Security Check: Ensure the data we found belongs to the agency
+            if (agencyId && data.agencyId && data.agencyId !== agencyId) {
+                throw new Error('Unauthorized: Water bills belong to another agency');
+            }
+            
             if (bill.unitName) return bill;
 
             try {
@@ -390,10 +405,11 @@ class WaterBillService {
      * Get water bill history for a property
      * @param {string} propertyId - Property ID
      */
-    async getWaterBillHistory(propertyId) {
+    async getWaterBillHistory(propertyId, agencyId) {
         const waterBillsQuery = query(
             collection(db, 'water_bills'),
-            where('propertyId', '==', propertyId)
+            where('propertyId', '==', propertyId),
+            where('agencyId', '==', agencyId)
         );
 
         const waterBillsSnap = await getDocs(waterBillsQuery);

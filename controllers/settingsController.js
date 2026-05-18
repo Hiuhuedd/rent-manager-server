@@ -2,24 +2,23 @@
 // FILE: src/controllers/settingsController.js
 // ============================================
 const settingsService = require('../services/settingsService');
-const { createSuccessResponse } = require('../utils/responseHelper');
+const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 
 class SettingsController {
     async getSettings(req, res) {
         try {
-            const settings = await settingsService.getSettings();
+            const { agencyId } = req.user;
+            const settings = await settingsService.getSettings(agencyId);
             res.json(createSuccessResponse(settings));
         } catch (error) {
             console.error('[SettingsController] Error getting settings:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to retrieve settings',
-            });
+            res.status(500).json(createErrorResponse('Failed to retrieve settings', error.message));
         }
     }
 
     async updateSettings(req, res) {
         try {
+            const { agencyId } = req.user;
             const {
                 agencyName,
                 paybill,
@@ -40,20 +39,14 @@ class SettingsController {
             if (onboardingCompleted !== undefined) updates.onboardingCompleted = onboardingCompleted;
 
             if (Object.keys(updates).length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'No valid settings provided to update',
-                });
+                return res.status(400).json(createErrorResponse('No valid settings provided to update'));
             }
 
-            const settings = await settingsService.updateSettings(updates);
+            const settings = await settingsService.updateSettings(agencyId, updates);
             res.json(createSuccessResponse(settings, 'Settings updated successfully'));
         } catch (error) {
             console.error('[SettingsController] Error updating settings:', error);
-            res.status(500).json({
-                success: false,
-                error: 'Failed to update settings',
-            });
+            res.status(500).json(createErrorResponse('Failed to update settings', error.message));
         }
     }
 }

@@ -27,13 +27,11 @@ class ReminderService {
             let sentCount = 0;
             let failedCount = 0;
             const errors = [];
-
-            // Fetch settings for customer service number
-            const settings = await settingsService.getSettings();
-            const paybill = settings.paybill || '522533';
+            const agencySettingsCache = {};
 
             for (const tenantDoc of tenantsSnap.docs) {
                 const tenant = tenantDoc.data();
+                const agencyId = tenant.agencyId || 'app-settings';
 
                 // Skip if no phone number
                 if (!tenant.phone) {
@@ -42,6 +40,13 @@ class ReminderService {
                 }
 
                 try {
+                    // Fetch settings for this specific agency (with simple cache)
+                    if (!agencySettingsCache[agencyId]) {
+                        agencySettingsCache[agencyId] = await settingsService.getSettings(agencyId);
+                    }
+                    const settings = agencySettingsCache[agencyId];
+                    const paybill = settings.paybill || '522533';
+
                     // Generate reminder SMS
                     const message = this.generateReminderMessage(tenant, paybill);
 
@@ -49,12 +54,13 @@ class ReminderService {
                     await smsService.sendSMS(
                         tenant.phone,
                         message,
-                        `reminder_${tenantDoc.id}`,
-                        { type: 'payment_reminder', tenantId: tenantDoc.id }
+                        agencyId,
+                        'system_reminder',
+                        tenantDoc.id
                     );
 
                     sentCount++;
-                    console.log(`   ✅ Sent reminder to ${tenant.name} (${tenant.phone})`);
+                    console.log(`   ✅ Sent reminder to ${tenant.name} (${tenant.phone}) for agency ${agencyId}`);
                 } catch (error) {
                     failedCount++;
                     errors.push({ tenant: tenant.name, error: error.message });

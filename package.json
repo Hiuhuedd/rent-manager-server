@@ -19,7 +19,10 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "firebase": "^12.4.0",
+    "firebase-admin": "^13.9.0",
+    "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.7",
     "puppeteer": "^24.33.0"
   }
 }

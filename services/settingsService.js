@@ -4,16 +4,19 @@
 const { db } = require('../config/firebase');
 const { doc, getDoc, setDoc, serverTimestamp } = require('firebase/firestore');
 
-const SETTINGS_DOC_ID = 'app-settings';
-
 class SettingsService {
-    async getSettings() {
+    /**
+     * Get settings for a specific agency
+     * @param {string} agencyId - Agency ID
+     */
+    async getSettings(agencyId = 'app-settings') {
         try {
-            const settingsRef = doc(db, 'settings', SETTINGS_DOC_ID);
+            const settingsRef = doc(db, 'settings', agencyId);
             const settingsSnap = await getDoc(settingsRef);
 
             if (!settingsSnap.exists()) {
                 return {
+                    agencyName: 'KodiPay Agency',
                     paybill: '522533',
                     paymentMethod: 'mpesa',
                     customerServiceNumber: '',
@@ -24,7 +27,7 @@ class SettingsService {
 
             const data = settingsSnap.data();
             return {
-                agencyName: data.agencyName || 'RentManager Agency',
+                agencyName: data.agencyName || 'KodiPay Agency',
                 paybill: data.paybill || '522533',
                 paymentMethod: data.paymentMethod || 'mpesa',
                 customerServiceNumber: data.customerServiceNumber || '',
@@ -32,14 +35,21 @@ class SettingsService {
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
         } catch (error) {
-            console.error('[SettingsService] Error fetching settings:', error);
+            console.error(`[SettingsService] Error fetching settings for ${agencyId}:`, error);
             throw error;
         }
     }
 
-    async updateSettings(updates) {
+    /**
+     * Update settings for a specific agency
+     * @param {string} agencyId - Agency ID
+     * @param {Object} updates - Settings updates
+     */
+    async updateSettings(agencyId, updates) {
+        if (!agencyId) throw new Error('Agency ID is required');
+
         try {
-            const settingsRef = doc(db, 'settings', SETTINGS_DOC_ID);
+            const settingsRef = doc(db, 'settings', agencyId);
 
             const settingsData = {
                 ...updates,
@@ -48,14 +58,14 @@ class SettingsService {
 
             await setDoc(settingsRef, settingsData, { merge: true });
 
-            console.log('[SettingsService] Settings updated successfully');
+            console.log(`[SettingsService] Settings updated successfully for agency: ${agencyId}`);
 
             return {
                 ...updates,
                 updatedAt: new Date(),
             };
         } catch (error) {
-            console.error('[SettingsService] Error updating settings:', error);
+            console.error(`[SettingsService] Error updating settings for ${agencyId}:`, error);
             throw error;
         }
     }

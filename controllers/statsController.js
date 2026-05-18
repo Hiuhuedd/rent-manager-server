@@ -19,7 +19,25 @@ class StatsController {
 
       console.log(`[CONTROLLER] Getting stats for month: ${month || 'current'}`);
       
-      const stats = await statsService.getStats(month);
+      if (!req.user || !req.user.agencyId) {
+        return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+      }
+      const { agencyId, assignedProperties, role } = req.user;
+      
+      // Support filtering by specific properties for admins (subagent dashboard view)
+      // null means "no filter" (show all), [] means "filter for nothing"
+      let filterProperties = role === 'admin' ? null : (assignedProperties || []);
+      
+      if (role === 'admin' && req.query.propertyIds !== undefined) {
+        const pIds = req.query.propertyIds;
+        filterProperties = pIds ? pIds.split(',') : [];
+      }
+
+      const stats = await statsService.getStats(
+        agencyId,
+        filterProperties,
+        month
+      );
       
       res.json(createSuccessResponse(stats));
     } catch (error) {
@@ -40,7 +58,15 @@ class StatsController {
         const targetDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
         const month = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`;
         
-        const stats = await statsService.getStats(month);
+        if (!req.user || !req.user.agencyId) {
+          return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+        }
+        const { agencyId, assignedProperties, role } = req.user;
+        const stats = await statsService.getStats(
+          agencyId,
+          role === 'admin' ? [] : assignedProperties,
+          month
+        );
         history.push(stats);
       }
 

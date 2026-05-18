@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const { resetMonthlyPaymentTracking } = require('./smsProcessor');
 const reminderService = require('./services/reminderService');
 const settingsService = require('./services/settingsService');
+const smsQuotaService = require('./services/smsQuotaService');
 
 /**
  * Initialize cron job to reset monthly payments on 1st of every month at 00:01
@@ -29,6 +30,19 @@ const initializeMonthlyCronJob = () => {
       }
     } catch (error) {
       console.error('❌ Unexpected error during monthly reset:', error);
+    }
+
+    // Add SMS Quota Reset
+    console.log('♻️ Starting monthly SMS quota reset...');
+    try {
+      const smsResult = await smsQuotaService.resetMonthlyQuotas();
+      if (smsResult.success) {
+        console.log(`✅ SMS quotas reset for ${smsResult.count} agencies.`);
+      } else {
+        console.error('❌ SMS quota reset failed:', smsResult.error);
+      }
+    } catch (smsError) {
+      console.error('❌ SMS quota reset error:', smsError.message);
     }
   }, {
     scheduled: true,

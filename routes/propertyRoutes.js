@@ -7,6 +7,9 @@ const router = express.Router();
 const propertyController = require('../controllers/propertyController');
 const { validatePropertyInput } = require('../middleware/validator');
 const { asyncHandler } = require('../middleware/errorHandler');
+const { authMiddleware } = require('../middleware/auth');
+
+router.use(authMiddleware);
 
 router.get('/', asyncHandler(propertyController.getAllProperties));
 router.get('/:id', asyncHandler(propertyController.getPropertyById));

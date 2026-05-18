@@ -9,6 +9,9 @@ const router = express.Router();
 const tenantController = require('../controllers/tenantController');
 const { validateTenantInput } = require('../middleware/validator');
 const { asyncHandler } = require('../middleware/errorHandler');
+const { authMiddleware } = require('../middleware/auth');
+
+router.use(authMiddleware);
 
 router.get('/', asyncHandler(tenantController.getAllTenants));
 router.get('/:id', asyncHandler(tenantController.getTenantById));

@@ -20,7 +20,7 @@ class ReportService {
      * Generate a comprehensive monthly report for a property
      * Aggregates Rent Collected vs Running Costs
      */
-    async generatePropertyReport(propertyId, month) {
+    async generatePropertyReport(propertyId, month, agencyId) {
         // 1. Fetch Property Details
         const propertyRef = doc(db, 'properties', propertyId);
         const propertySnap = await getDoc(propertyRef);
@@ -28,6 +28,11 @@ class ReportService {
             throw new Error('Property not found');
         }
         const propertyData = propertySnap.data();
+        
+        // Security Check
+        if (agencyId && propertyData.agencyId !== agencyId) {
+            throw new Error('Unauthorized: Property belongs to another agency');
+        }
 
         // 4. Calculate Tenant Payment Statuses and Commission
         const agencySettings = await settingsService.getSettings();
@@ -284,11 +289,12 @@ class ReportService {
     /**
      * Generate a Portfolio Report for all properties
      */
-    async generatePortfolioReport(month) {
-        console.log(`[ReportService] Generating Portfolio Report for Month: ${month}`);
+    async generatePortfolioReport(agencyId, month) {
+        console.log(`[ReportService] Generating Portfolio Report for Agency: ${agencyId}, Month: ${month}`);
 
-        // 1. Fetch All Properties
-        const propertiesSnap = await getDocs(collection(db, 'properties'));
+        // 1. Fetch All Properties for Agency
+        const q = query(collection(db, 'properties'), where('agencyId', '==', agencyId));
+        const propertiesSnap = await getDocs(q);
         const properties = propertiesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         const agencySettings = await settingsService.getSettings();
@@ -354,13 +360,19 @@ class ReportService {
     /**
      * Generate a full Statement of Account for a specific tenant
      */
-    async generateTenantStatement(tenantId) {
+    async generateTenantStatement(tenantId, agencyId) {
         console.log(`[ReportService] Generating Statement for Tenant: ${tenantId}`);
 
         // 1. Fetch Tenant
         const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
         if (!tenantSnap.exists()) throw new Error('Tenant not found');
         const tenant = tenantSnap.data();
+        
+        // Security Check
+        if (agencyId && tenant.agencyId !== agencyId) {
+            throw new Error('Unauthorized: Tenant belongs to another agency');
+        }
+        
         console.log(`[ReportService] Tenant Data:`, { name: tenant.name, unitCode: tenant.unitCode, propertyId: tenant.propertyId });
 
         // 2. Fetch Unit & Property

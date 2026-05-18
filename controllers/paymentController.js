@@ -2,29 +2,82 @@
 // FILE: src/controllers/paymentController.js
 // ============================================
 const paymentService = require('../services/paymentService');
+const manualPaymentProcessor = require('../manualPaymentProcessor');
 const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 
 class PaymentController {
+    /**
+     * Process a manual payment
+     * POST /api/payments/manual
+     */
+    async processManualPayment(req, res) {
+        const { 
+            tenantId, amount, paymentMethod, paymentDate, paymentMonth, note,
+            transactionCode, bankName, phoneNumber, receiptNumber, chequeNumber, chequeDate
+        } = req.body;
+        if (!req.user || !req.user.agencyId) {
+            return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+        }
+        const agencyId = req.user.agencyId;
+
+        if (!tenantId || !amount) {
+            return res.status(400).json(createErrorResponse('tenantId and amount are required'));
+        }
+
+        const result = await manualPaymentProcessor.processManualPayment({
+            tenantId,
+            amount: parseFloat(amount),
+            paymentMethod,
+            paymentDate,
+            paymentMonth,
+            note,
+            transactionCode,
+            bankName,
+            phoneNumber,
+            receiptNumber,
+            chequeNumber,
+            chequeDate,
+            agencyId // Pass agencyId
+        });
+
+        if (result.success) {
+            res.status(200).json(createSuccessResponse(result.data, 'Manual payment processed successfully'));
+        } else {
+            res.status(500).json(createErrorResponse(result.error));
+        }
+    }
+
   /**
    * Get payment status for all units in a specific month
    * GET /api/payments/status?month=2024-11
    */
   async getPaymentStatus(req, res) {
     const { month } = req.query;
+    if (!req.user || !req.user.agencyId) {
+      return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+    }
+    const { agencyId, assignedProperties, role } = req.user;
+    
+    let filterProperties = role === 'admin' ? null : (assignedProperties || []);
+    if (role === 'admin' && req.query.propertyIds !== undefined) {
+      filterProperties = req.query.propertyIds ? req.query.propertyIds.split(',') : [];
+    }
 
-    console.log(`📊 Request: Get payment status for ${month || 'current month'}`);
-
-    const status = await paymentService.getPaymentStatus(month);
+    const status = await paymentService.getPaymentStatus(
+      agencyId, 
+      month,
+      filterProperties
+    );
 
     res.status(200).json({
       success: true,
       data: status,
       metadata: {
         month: month || new Date().toISOString().slice(0, 7),
-        totalUnits: status.length,
-        paidUnits: status.filter(s => s.status === 'Paid').length,
-        unpaidUnits: status.filter(s => s.status === 'Unpaid').length,
-        vacantUnits: status.filter(s => s.status === 'Vacant').length
+        totalUnits: status?.length || 0,
+        paidUnits: (status || []).filter(s => s.status === 'Paid').length,
+        unpaidUnits: (status || []).filter(s => s.status === 'Unpaid').length,
+        vacantUnits: (status || []).filter(s => s.status === 'Vacant').length
       }
     });
   }
@@ -35,23 +88,34 @@ class PaymentController {
    */
   async getPaymentVolume(req, res) {
     const { month } = req.query;
+    if (!req.user || !req.user.agencyId) {
+      return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+    }
+    const { agencyId, assignedProperties, role } = req.user;
+    
+    let filterProperties = role === 'admin' ? null : (assignedProperties || []);
+    if (role === 'admin' && req.query.propertyIds !== undefined) {
+      filterProperties = req.query.propertyIds ? req.query.propertyIds.split(',') : [];
+    }
 
-    console.log(`📊 Request: Get payment volume for ${month || 'current month'}`);
+    const volume = await paymentService.getPaymentVolume(
+      agencyId, 
+      month,
+      filterProperties
+    );
 
-    const volume = await paymentService.getPaymentVolume(month);
-
-    const totalVolume = volume.reduce((sum, v) => sum + v.total, 0);
-    const totalPayments = volume.reduce((sum, v) => sum + (v.paymentCount || 0), 0);
+    const totalVolume = (volume || []).reduce((sum, v) => sum + (v.total || 0), 0);
+    const totalPayments = (volume || []).reduce((sum, v) => sum + (v.paymentCount || 0), 0);
 
     res.status(200).json({
       success: true,
       data: volume,
       metadata: {
         month: month || new Date().toISOString().slice(0, 7),
-        totalProperties: volume.length,
+        totalProperties: volume?.length || 0,
         totalVolume,
         totalPayments,
-        averagePerProperty: volume.length > 0 ? (totalVolume / volume.length).toFixed(2) : 0
+        averagePerProperty: (volume?.length || 0) > 0 ? (totalVolume / volume.length).toFixed(2) : 0
       }
     });
   }
@@ -62,14 +126,28 @@ class PaymentController {
    */
   async getMonthlyReport(req, res) {
     const { month } = req.query;
+    if (!req.user || !req.user.agencyId) {
+      return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+    }
+    const { agencyId, assignedProperties, role } = req.user;
+    
+    let filterProperties = role === 'admin' ? null : (assignedProperties || []);
+    if (role === 'admin' && req.query.propertyIds !== undefined) {
+      filterProperties = req.query.propertyIds ? req.query.propertyIds.split(',') : [];
+    }
 
-    console.log(`📊 Request: Generate monthly report for ${month || 'current month'}`);
+    const report = await paymentService.getMonthlyReport(
+      agencyId, 
+      month,
+      filterProperties
+    );
 
-    const report = await paymentService.getMonthlyReport(month);
-
-    // Add collection rate
-    const collectionRate = report.summary.totalExpected > 0
-      ? ((report.summary.totalReceived / report.summary.totalExpected) * 100).toFixed(2)
+    // Add collection rate with defensive checks
+    const totalExpected = report?.summary?.totalExpected || 0;
+    const totalReceived = report?.summary?.totalReceived || 0;
+    
+    const collectionRate = totalExpected > 0
+      ? ((totalReceived / totalExpected) * 100).toFixed(2)
       : 0;
 
     res.status(200).json({
@@ -88,22 +166,32 @@ class PaymentController {
    */
   async getOverduePayments(req, res) {
     const { month } = req.query;
+    if (!req.user || !req.user.agencyId) {
+      return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+    }
+    const { agencyId, assignedProperties, role } = req.user;
+    
+    let filterProperties = role === 'admin' ? null : (assignedProperties || []);
+    if (role === 'admin' && req.query.propertyIds !== undefined) {
+      filterProperties = req.query.propertyIds ? req.query.propertyIds.split(',') : [];
+    }
 
-    console.log(`📊 Request: Get overdue payments for ${month || 'current month'}`);
+    const overdueData = await paymentService.getOverduePayments(
+      agencyId, 
+      month,
+      filterProperties
+    );
 
-    const overdueData = await paymentService.getOverduePayments(month);
-
-    const totalOverdue = overdueData.tenants.reduce((sum, t) => sum + t.remainingAmount, 0);
-    const totalArrears = overdueData.tenants.reduce((sum, t) => sum + t.arrears, 0);
+    const totalOverdue = (overdueData?.tenants || []).reduce((sum, t) => sum + (t.remainingAmount || 0), 0);
 
     res.status(200).json({
       success: true,
       data: overdueData,
       metadata: {
         totalOverdueAmount: totalOverdue,
-        totalArrearsAmount: totalArrears,
-        partialPayments: overdueData.tenants.filter(t => t.status === 'partial').length,
-        completelyUnpaid: overdueData.tenants.filter(t => t.status === 'unpaid').length
+        count: overdueData?.count || 0,
+        partialPayments: (overdueData?.tenants || []).filter(t => t.status === 'partial').length,
+        completelyUnpaid: (overdueData?.tenants || []).filter(t => t.status === 'unpaid').length
       }
     });
   }
@@ -115,49 +203,25 @@ class PaymentController {
    */
   async sendReminders(req, res) {
     const { month, tenantIds } = req.body;
-
-    console.log(`📱 Request: Send reminders for ${month || 'current month'}`);
-
-    const result = await paymentService.sendReminders(month, tenantIds);
+    if (!req.user || !req.user.agencyId) {
+      return res.status(401).json(createErrorResponse('Unauthorized: Missing agency context'));
+    }
+    const { agencyId, assignedProperties, role } = req.user;
+    const result = await paymentService.sendReminders(
+      agencyId, 
+      month, 
+      tenantIds,
+      role === 'admin' ? null : (assignedProperties || [])
+    );
 
     res.status(200).json({
       success: true,
       data: result,
       metadata: {
-        successRate: result.sent > 0
-          ? `${((result.sent / (result.sent + result.failed)) * 100).toFixed(2)}%`
+        successRate: (result?.sent || 0) > 0
+          ? `${((result.sent / (result.sent + (result.failed || 0))) * 100).toFixed(2)}%`
           : '0%',
         timestamp: new Date().toISOString()
-      }
-    });
-  }
-
-  /**
-   * Get arrears summary
-   * GET /api/payments/arrears?month=2024-11
-   */
-  async getArrears(req, res) {
-    const { month } = req.query;
-
-    console.log(`📊 Request: Get arrears for ${month || 'current month'}`);
-
-    const arrearsData = await paymentService.getArrears(month);
-
-    const totalArrears = arrearsData.arrears
-      .filter(a => a.amount)
-      .reduce((sum, a) => sum + a.amount, 0);
-
-    const tenantsWithArrears = arrearsData.arrears.filter(a => a.tenant).length;
-
-    res.status(200).json({
-      success: true,
-      data: arrearsData,
-      metadata: {
-        totalArrears,
-        tenantsWithArrears,
-        averageArrears: tenantsWithArrears > 0
-          ? (totalArrears / tenantsWithArrears).toFixed(2)
-          : 0
       }
     });
   }

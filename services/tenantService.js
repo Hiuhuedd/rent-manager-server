@@ -1,4 +1,3 @@
-
 // ============================================
 // FILE: src/services/tenantService.js
 // ============================================
@@ -12,30 +11,47 @@ const { PAYMENT_STATUS, TENANT_STATUS, DEPOSIT_STATUS } = require('../config/con
 const smsService = require('../smsService');
 
 class TenantService {
-  async getAllTenants() {
+  async getAllTenants(agencyId, assignedProperties = null, userUid = null) {
     const currentMonth = getCurrentMonth();
+    
+    let accessiblePropertyIds = [];
 
-    // Fetch tenants, financial records, and units in parallel to map names
+    if (userUid || assignedProperties) {
+      // Subagent Case: Get properties they can access
+      const propertyService = require('./propertyService');
+      const props = await propertyService.getAllProperties(agencyId, assignedProperties, userUid);
+      accessiblePropertyIds = props.map(p => p.propertyId);
+      
+      if (accessiblePropertyIds.length === 0) return [];
+    }
+
+    // Fetch tenants, financial records, and units in parallel
+    const tenantsQuery = (accessiblePropertyIds.length > 0)
+        ? query(collection(db, 'tenants'), where('agencyId', '==', agencyId), where('propertyId', 'in', accessiblePropertyIds))
+        : query(collection(db, 'tenants'), where('agencyId', '==', agencyId));
+
+    const paymentsQuery = (accessiblePropertyIds.length > 0)
+        ? query(collection(db, 'financial_records'), where('agencyId', '==', agencyId), where('paymentMonth', '==', currentMonth), where('propertyId', 'in', accessiblePropertyIds))
+        : query(collection(db, 'financial_records'), where('agencyId', '==', agencyId), where('paymentMonth', '==', currentMonth));
+
+    const unitsQuery = (accessiblePropertyIds.length > 0)
+        ? query(collection(db, 'units'), where('agencyId', '==', agencyId), where('propertyId', 'in', accessiblePropertyIds))
+        : query(collection(db, 'units'), where('agencyId', '==', agencyId));
+
     const [tenantsSnapshot, paymentsSnapshot, unitsSnapshot] = await Promise.all([
-      getDocs(collection(db, 'tenants')),
-      getDocs(query(
-        collection(db, 'financial_records'),
-        where('paymentMonth', '==', currentMonth)
-      )),
-      getDocs(collection(db, 'units'))
+      getDocs(tenantsQuery),
+      getDocs(paymentsQuery),
+      getDocs(unitsQuery)
     ]);
 
-    // Create Unit Map for Name Resolution
     const unitMap = {};
     unitsSnapshot.forEach(doc => {
       const u = doc.data();
-      // Map both ID and Code to Name
       const name = u.unitName || u.unitId || u.unitCode;
       if (u.unitId) unitMap[u.unitId] = name;
       if (u.unitCode) unitMap[u.unitCode] = name;
     });
 
-    // Aggregate payments by tenant
     const paymentsByTenant = {};
     paymentsSnapshot.docs.forEach(doc => {
       const data = doc.data();
@@ -47,59 +63,45 @@ class TenantService {
     return tenantsSnapshot.docs.map(doc => {
       const data = doc.data();
       const paidThisMonth = paymentsByTenant[doc.id] || 0;
-
-      // Use the arrears directly from the database as it is now updated in real-time by the SMS processor.
-      // Manually subtracting paidThisMonth here causes double-discounting.
       const effectiveArrears = (data.financialSummary?.arrears || data.arrears || 0);
-
       const unitDisplayName = unitMap[data.unitCode] || data.unitCode;
 
       return {
         id: doc.id,
         ...data,
-        unitName: unitDisplayName, // Add unitName
-        arrears: effectiveArrears, // Override arrears with calculated value
-        originalArrears: data.arrears, // Keep original for reference if needed
+        unitName: unitDisplayName,
+        arrears: effectiveArrears,
         paidThisMonth,
-        rentDeposit: data.rentDeposit || {
-          amount: 0,
-          status: DEPOSIT_STATUS.NOT_REQUIRED,
-          paidDate: null,
-          refundStatus: 'not_applicable'
-        },
-        utilityFees: data.utilityFees || {
-          garbageFee: 0,
-          waterBill: 0,
-          electricity: 0,
-          other: 0
-        },
-        financialSummary: data.financialSummary || {
-          totalPaid: 0,
-          arrears: 0,
-          balance: 0
-        },
-        monthlyPaymentTracking: data.monthlyPaymentTracking || null
+        rentDeposit: data.rentDeposit || { amount: 0, status: DEPOSIT_STATUS.NOT_REQUIRED },
+        utilityFees: data.utilityFees || { garbageFee: 0, waterBill: 0, electricity: 0, other: 0 },
+        financialSummary: data.financialSummary || { totalPaid: 0, arrears: 0, balance: 0 }
       };
     });
   }
 
-  async getTenantById(id) {
-    const status = await this.getPaymentStatus(id);
-
-    if (!status) {
-      return null;
-    }
-
+  async getTenantById(id, agencyId, accessiblePropertyIds = null) {
     const tenantRef = doc(db, 'tenants', id);
     const tenantSnap = await getDoc(tenantRef);
+    
+    if (!tenantSnap.exists()) return null;
     const tenantData = tenantSnap.data();
 
+    // Security Check
+    if (agencyId && tenantData.agencyId !== agencyId) {
+      throw new Error('Unauthorized: Tenant does not belong to your agency');
+    }
+
+    if (accessiblePropertyIds && !accessiblePropertyIds.includes(tenantData.propertyId)) {
+        throw new Error('Unauthorized: You do not have access to this property');
+    }
+
+    // Refresh status/tracking for this month
+    await this.getPaymentStatus(id);
+    const refreshedSnap = await getDoc(tenantRef);
+
     return {
-      id: tenantSnap.id,
-      ...tenantData,
-      // Ensure we return the most up-to-date values calculated by getPaymentStatus
-      monthlyPaymentTracking: tenantData.monthlyPaymentTracking,
-      financialSummary: tenantData.financialSummary
+      id: refreshedSnap.id,
+      ...refreshedSnap.data()
     };
   }
 
@@ -203,15 +205,8 @@ class TenantService {
           depositRequired: includeDeposit ? deposit : 0
         };
 
-        // Update Global Financial Stats
-        // New Arrears = (Old Arrears + New Charge) - CarryOver
         const newGlobalArrears = Math.max(0, (tenant.financialSummary?.arrears || tenant.arrears || 0) + totalExpected - carryOver);
-        const newGlobalBalance = existingBalance - carryOver - remainingAmount;
-        // Note: balance = totalPaid - totalExpected. 
-        // When new month starts, totalExpected increases, so balance decreases by totalExpected.
-        // We already have existingBalance. New debt is totalExpected.
-        // So global balance simply becomes existingBalance - totalExpected.
-
+        
         await updateDoc(tenantRef, {
           monthlyPaymentTracking: monthlyTracking,
           financialSummary: {
@@ -225,16 +220,6 @@ class TenantService {
       }
     }
 
-    monthlyTracking = monthlyTracking || {
-      month: currentMonth,
-      expectedAmount: 0,
-      paidAmount: 0,
-      remainingAmount: 0,
-      status: PAYMENT_STATUS.UNPAID,
-      payments: [],
-      breakdown: { deposit: 0, rent: 0, utilities: 0 }
-    };
-
     return {
       tenantId,
       tenantName: tenant.name,
@@ -246,513 +231,154 @@ class TenantService {
       remaining: monthlyTracking.remainingAmount || 0,
       breakdown: monthlyTracking.breakdown || { deposit: 0, rent: 0, utilities: 0 },
       payments: monthlyTracking.payments || [],
-      financialSummary: tenant.financialSummary || {
-        totalPaid: 0,
-        arrears: 0,
-        balance: 0
-      },
+      financialSummary: tenant.financialSummary || { totalPaid: 0, arrears: 0, balance: 0 },
       depositStatus: tenant.rentDeposit?.status || DEPOSIT_STATUS.NOT_REQUIRED
     };
   }
 
   async createTenant(tenantData) {
     const start = Date.now();
-    console.log('📥 Creating tenant:', tenantData.name);
+    const { name, unitCode, phone } = tenantData;
 
-    const { id, name, unitCode, phone } = tenantData;
-
-    // Verify unit exists
-    const unitsQuery = query(collection(db, 'units'), where('unitId', '==', unitCode));
+    const unitsQuery = query(
+      collection(db, 'units'), 
+      where('unitId', '==', unitCode),
+      where('agencyId', '==', tenantData.agencyId || 'default')
+    );
     const unitsSnapshot = await getDocs(unitsQuery);
 
-    if (unitsSnapshot.empty) {
-      throw new Error(`Unit ${unitCode} not found`);
-    }
+    if (unitsSnapshot.empty) throw new Error(`Unit ${unitCode} not found`);
 
     const unitDoc = unitsSnapshot.docs[0];
     const unit = unitDoc.data();
     const propertyDoc = await getDoc(doc(db, 'properties', unit.propertyId));
 
     const now = new Date().toISOString();
-    const depositAmount = unit.depositAmount || 0;
-
     const completeTenantData = {
       name: name.trim(),
       unitCode,
       phone: phone.trim(),
       propertyId: unit.propertyId,
-
-      // Property details, stripped of rent/deposit amounts
-      propertyDetails: tenantData.propertyDetails || {
+      agencyId: tenantData.agencyId || unit.agencyId || 'default',
+      propertyDetails: {
         propertyId: unit.propertyId,
         propertyName: propertyDoc.exists() ? propertyDoc.data().propertyName : 'Unknown',
         unitCategory: unit.category || 'Unknown',
       },
-
-      // Payments array to track transaction IDs only
-      payments: tenantData.payments || [],
-
-      // Basic tenant info
-      tenantStatus: tenantData.tenantStatus || 'active',
+      tenantStatus: 'active',
       moveInDate: tenantData.moveInDate || now,
-      moveOutDate: tenantData.moveOutDate || null,
-      createdAt: id ? undefined : now,
+      createdAt: now,
       updatedAt: now,
-
-      contactInfo: tenantData.contactInfo || {
-        email: null,
-        alternatePhone: null,
-        emergencyContact: {
-          name: null,
-          phone: null,
-          relationship: null,
-        },
-      },
-
-      identification: tenantData.identification || {
-        idNumber: null,
-        idType: null,
-        idDocumentUrl: null,
-      },
-
-      notes: tenantData.notes || {
-        moveInNotes: 'New tenant added via mobile app',
-        specialTerms: null,
-        restrictions: null,
-      },
-
-      utilityFees: tenantData.utilityFees || unit.utilityFees || {
-        garbageFee: 0,
-        waterBill: 0,
-        electricity: 0,
-        other: 0,
-      },
-
       rentDeposit: {
         amount: tenantData.isExistingTenant ? 0 : (unit.depositAmount || 0),
         status: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
-        paidDate: null,
-        refundStatus: 'not_applicable',
       },
+      utilityFees: unit.utilityFees || { garbageFee: 0, waterBill: 0, electricity: 0, other: 0 }
     };
 
-    // Calculate initial financial state
-    // FIX: Fetch actual water bills if individual meter
-    // FIX: Fetch actual water bills if individual meter
-    const tempPropertyRef = doc(db, 'properties', unit.propertyId);
-    const tempPropertySnap = await getDoc(tempPropertyRef);
-    const tempPropertyData = tempPropertySnap.exists() ? tempPropertySnap.data() : {};
+    const tempPropertyData = propertyDoc.exists() ? propertyDoc.data() : {};
     const waterMeterType = tempPropertyData.waterMeterSettings?.meterType || 'single';
-
     let waterBillAmount = completeTenantData.utilityFees.waterBill || 0;
 
     if (waterMeterType === 'individual') {
-      const currentMonth = getCurrentMonth();
       try {
-        const waterBillRef = doc(db, 'water_bills', `${unit.propertyId}_${currentMonth}`);
+        const waterBillRef = doc(db, 'water_bills', `${unit.propertyId}_${getCurrentMonth()}`);
         const waterBillSnap = await getDoc(waterBillRef);
-
         if (waterBillSnap.exists()) {
-          const waterBillData = waterBillSnap.data();
-          const unitBill = waterBillData.bills?.find(b => b.unitId === unit.unitId);
-          if (unitBill) {
-            waterBillAmount = parseFloat(unitBill.totalBill) || 0;
-            // Update the utility fees object
-            if (completeTenantData.utilityFees) {
-              completeTenantData.utilityFees.waterBill = waterBillAmount;
-            }
-          }
+          const unitBill = waterBillSnap.data().bills?.find(b => b.unitId === unit.unitId);
+          if (unitBill) waterBillAmount = parseFloat(unitBill.totalBill) || 0;
         }
-      } catch (err) {
-        console.warn('Failed to fetch initial water bill:', err);
-      }
+      } catch (err) {}
     }
 
-    const utilityFeesData = completeTenantData.utilityFees;
-    const totalUtilityFees = (utilityFeesData.garbageFee || 0) +
-      waterBillAmount +
-      (utilityFeesData.electricity || 0) +
-      (utilityFeesData.other || 0);
+    const totalInitialDue = (unit.rentAmount || 0) + (completeTenantData.utilityFees.garbageFee || 0) + waterBillAmount + (completeTenantData.utilityFees.electricity || 0) + completeTenantData.rentDeposit.amount;
 
-    const rentAmount = unit.rentAmount || 0;
-    const depositAmountToPay = completeTenantData.rentDeposit.amount;
-
-    const totalInitialDue = rentAmount + totalUtilityFees + depositAmountToPay;
-
-    // Add financial fields to completeTenantData
     completeTenantData.arrears = totalInitialDue;
-    completeTenantData.financialSummary = {
-      totalPaid: 0,
-      arrears: totalInitialDue,
-      balance: -totalInitialDue, // Negative balance indicates amount due
-    };
-
-    // Initialize monthly tracking
+    completeTenantData.financialSummary = { totalPaid: 0, arrears: totalInitialDue, balance: -totalInitialDue };
     completeTenantData.monthlyPaymentTracking = {
       month: getCurrentMonth(),
       expectedAmount: totalInitialDue,
       paidAmount: 0,
       remainingAmount: totalInitialDue,
       status: PAYMENT_STATUS.UNPAID,
-      payments: [],
-      breakdown: {
-        deposit: depositAmountToPay,
-        rent: rentAmount,
-        utilities: totalUtilityFees
-      },
-      includesDeposit: !tenantData.isExistingTenant,
-      depositRequired: depositAmountToPay
+      breakdown: { deposit: completeTenantData.rentDeposit.amount, rent: unit.rentAmount || 0, utilities: totalInitialDue - (unit.rentAmount || 0) - completeTenantData.rentDeposit.amount }
     };
 
+    const tenantRef = await addDoc(collection(db, 'tenants'), completeTenantData);
+    await updateDoc(doc(db, 'units', unitDoc.id), { tenantId: tenantRef.id, isVacant: false });
 
-    let tenantId;
-    let isNewTenant = false;
-
-    if (id) {
-      Object.keys(completeTenantData).forEach(key =>
-        completeTenantData[key] === undefined && delete completeTenantData[key]
-      );
-      await updateDoc(doc(db, 'tenants', id), completeTenantData);
-      tenantId = id;
-    } else {
-      const tenantRef = await addDoc(collection(db, 'tenants'), completeTenantData);
-      tenantId = tenantRef.id;
-      isNewTenant = true;
-    }
-
-    // Link tenant to unit
-    await updateDoc(doc(db, 'units', unitDoc.id), {
-      tenantId,
-      isVacant: false,
-    });
-
-    // Update property stats
-    const propertyRef = doc(db, 'properties', unit.propertyId);
-    const propertySnap = await getDoc(propertyRef);
-
-    if (propertySnap.exists()) {
-      const propertyData = propertySnap.data();
-      const newVacantCount = Math.max((propertyData.propertyVacantUnits || 1) - 1, 0);
-      const newRevenue = (propertyData.propertyRevenueTotal || 0) + (unit.rentAmount || 0);
-
+    // Refresh property summary stats
+    const propertyService = require('./propertyService');
+    const propertyData = await propertyService.getPropertyById(unit.propertyId, tenantData.agencyId);
+    if (propertyData) {
+      const propertyRef = doc(db, 'properties', unit.propertyId);
       await updateDoc(propertyRef, {
-        propertyVacantUnits: newVacantCount,
-        propertyRevenueTotal: newRevenue,
+        propertyOccupiedUnits: propertyData.propertyOccupiedUnits,
+        propertyVacantUnits: propertyData.propertyVacantUnits,
+        propertyRevenueTotal: propertyData.propertyRevenueTotal,
+        updatedAt: new Date().toISOString()
       });
     }
 
-    // Create initial payment log
-    if (isNewTenant) {
-      try {
-        await addDoc(collection(db, 'paymentLogs'), {
-          tenantId,
-          unitCode,
-          propertyId: unit.propertyId,
-          type: 'rent_due',
-          amount: unit.rentAmount || 0,
-          dueDate: completeTenantData.paymentTimeline.nextPaymentDate,
-          status: PAYMENT_STATUS.PENDING,
-          createdAt: now,
-          month: getCurrentMonth(),
-        });
-      } catch (logError) {
-        console.warn('⚠️ Failed to create payment log:', logError.message);
-      }
-    }
-
-    // Send welcome SMS
-    if (isNewTenant) {
-      await this._sendWelcomeSMS(tenantId, completeTenantData, unit, phone, now);
-    }
-
-    return {
-      tenantId,
-      name: completeTenantData.name,
-      unitCode: completeTenantData.unitCode,
-      propertyId: completeTenantData.propertyId,
-      moveInDate: completeTenantData.moveInDate,
-      financialSummary: completeTenantData.financialSummary,
-      depositInfo: {
-        amount: depositAmount,
-        status: completeTenantData.rentDeposit.status,
-      },
-      welcomeSMSSent: isNewTenant,
-      durationMs: Date.now() - start,
-    };
-  }
-
-  async _sendWelcomeSMS(tenantId, tenantData, unit, phone, now) {
-    try {
-      let formattedPhoneForSMS = phone.trim();
-      if (formattedPhoneForSMS.startsWith('0')) {
-        formattedPhoneForSMS = '+254' + formattedPhoneForSMS.substring(1);
-      } else if (!formattedPhoneForSMS.startsWith('+254') && !formattedPhoneForSMS.startsWith('254')) {
-        formattedPhoneForSMS = '+254' + formattedPhoneForSMS;
-      }
-
-      // Fetch property to get water meter settings
-      const propertyRef = doc(db, 'properties', unit.propertyId);
-      const propertySnap = await getDoc(propertyRef);
-      const property = propertySnap.exists() ? propertySnap.data() : {};
-      const waterMeterType = property.waterMeterSettings?.meterType || 'single';
-
-      const utilityFeesData = tenantData.utilityFees;
-      const garbageFee = utilityFeesData.garbageFee || 0;
-      const waterFee = utilityFeesData.waterBill || 0;
-      const electricityFee = utilityFeesData.electricity || 0;
-      const otherFee = utilityFeesData.other || 0;
-      const totalUtilityFees = garbageFee + waterFee + electricityFee + otherFee;
-      const nonWaterUtilityFees = garbageFee + electricityFee + otherFee;
-      const rentAmount = unit.rentAmount || 0;
-      const totalMonthlyCharge = rentAmount + totalUtilityFees;
-      // Use the actual deposit amount set on the tenant record (will be 0 for existing tenants)
-      const depositAmount = tenantData.rentDeposit ? tenantData.rentDeposit.amount : (unit.depositAmount || 0);
-
-      // Fetch paybill from settings
-      const settingsService = require('./settingsService');
-      const settings = await settingsService.getSettings();
-
-      const paymentInfo = {
-        paybill: settings.paybill,
-        accountNumber: phone.trim().startsWith('0') ? phone.trim() : `0${phone.trim().replace(/^\+254/, '').replace(/^254/, '')}`,
-      };
-
-      const tenantSMSData = {
-        name: tenantData.name,
-        unitCode: tenantData.unitCode,
-        unitName: unit.unitName || unit.unitId,
-        rentAmount: rentAmount,
-        utilityFees: totalUtilityFees,
-        nonWaterUtilityFees: nonWaterUtilityFees,
-        waterFee: waterFee,
-        totalAmount: totalMonthlyCharge,
-        depositAmount: depositAmount,
-        phone: phone.trim(),
-        waterMeterType: waterMeterType,
-      };
-
-      const welcomeMessage = smsService.generateTenantWelcomeSMS(tenantSMSData, paymentInfo);
-      const smsResult = await smsService.sendSMS(
-        formattedPhoneForSMS,
-        welcomeMessage,
-        'system',
-        tenantId
-      );
-
-      if (smsResult.success) {
-        await updateDoc(doc(db, 'tenants', tenantId), {
-          welcomeSMSSent: true,
-          welcomeSMSMessageId: smsResult.messageId,
-          welcomeSMSSentAt: now,
-        });
-      } else {
-        await updateDoc(doc(db, 'tenants', tenantId), {
-          welcomeSMSSent: false,
-          welcomeSMSError: smsResult.error,
-          welcomeSMSAttemptedAt: now,
-        });
-      }
-    } catch (smsError) {
-      console.error('❌ Error sending welcome SMS:', smsError.message);
-    }
+    return { tenantId: tenantRef.id, ...completeTenantData };
   }
 
   async deleteTenant(tenantId) {
-    const start = Date.now();
-
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-
-    if (!tenantSnap.exists()) {
-      throw new Error('Tenant not found');
-    }
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
 
     const tenantData = tenantSnap.data();
-
-    // Get unit
     const unitsQuery = query(
-      collection(db, 'units'),
-      where('unitId', '==', tenantData.unitCode)
+      collection(db, 'units'), 
+      where('unitId', '==', tenantData.unitCode),
+      where('agencyId', '==', tenantData.agencyId)
     );
     const unitsSnapshot = await getDocs(unitsQuery);
-
-    const unitDoc = unitsSnapshot.docs[0];
-    const unit = unitDoc?.data();
-
-    // Update unit
-    if (unitDoc) {
-      await updateDoc(doc(db, 'units', unitDoc.id), {
-        tenantId: null,
-        isVacant: true,
-      });
+    if (!unitsSnapshot.empty) {
+      await updateDoc(doc(db, 'units', unitsSnapshot.docs[0].id), { tenantId: null, isVacant: true });
     }
 
-    // Update property stats
-    const propertyRef = doc(db, 'properties', tenantData.propertyId);
-    const propertySnap = await getDoc(propertyRef);
-
-    if (propertySnap.exists()) {
-      const propertyData = propertySnap.data();
-      const newVacantCount = (propertyData.propertyVacantUnits || 0) + 1;
-      const newOccupiedCount = Math.max((propertyData.propertyOccupiedUnits || 1) - 1, 0);
-      const rentAmount = unit?.rentAmount || 0;
-      const newRevenue = Math.max((propertyData.propertyRevenueTotal || 0) - rentAmount, 0);
-
+    // Refresh property summary stats
+    const propertyService = require('./propertyService');
+    const propertyData = await propertyService.getPropertyById(tenantData.propertyId, tenantData.agencyId);
+    if (propertyData) {
+      const propertyRef = doc(db, 'properties', tenantData.propertyId);
       await updateDoc(propertyRef, {
-        propertyVacantUnits: newVacantCount,
-        propertyOccupiedUnits: newOccupiedCount,
-        propertyRevenueTotal: newRevenue,
+        propertyOccupiedUnits: propertyData.propertyOccupiedUnits,
+        propertyVacantUnits: propertyData.propertyVacantUnits,
+        propertyRevenueTotal: propertyData.propertyRevenueTotal,
+        updatedAt: new Date().toISOString()
       });
     }
 
-    // Delete tenant
     await deleteDoc(tenantRef);
-
-    // Update payment logs
-    try {
-      const paymentLogsQuery = query(
-        collection(db, 'paymentLogs'),
-        where('tenantId', '==', tenantId),
-        where('status', '==', PAYMENT_STATUS.PENDING)
-      );
-      const paymentLogsSnapshot = await getDocs(paymentLogsQuery);
-
-      const updatePromises = paymentLogsSnapshot.docs.map((doc) =>
-        updateDoc(doc.ref, {
-          status: 'cancelled',
-          cancelledAt: new Date().toISOString(),
-          cancelReason: 'Tenant deleted',
-        })
-      );
-
-      await Promise.all(updatePromises);
-    } catch (logError) {
-      console.warn('⚠️ Failed to update payment logs:', logError.message);
-    }
-
-    return {
-      tenantId,
-      name: tenantData.name,
-      unitCode: tenantData.unitCode,
-      deletedAt: new Date().toISOString(),
-      durationMs: Date.now() - start,
-    };
+    return { success: true };
   }
 
   async sendReminder(tenantId) {
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-
-    if (!tenantSnap.exists()) {
-      throw new Error('Tenant not found');
-    }
-
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
     const tenant = tenantSnap.data();
 
-    if (!tenant.arrears || tenant.arrears <= 0) {
-      throw new Error('No arrears for this tenant');
-    }
-
-    // Get current settings for paybill info
-    const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
+    const settingsSnap = await getDoc(doc(db, 'settings', tenant.agencyId || 'default'));
     const settings = settingsSnap.exists() ? settingsSnap.data() : { paybill: '4082260' };
 
-    const paymentInfo = {
-      paybill: settings.paybill,
-      accountNumber: tenant.phone || tenant.unitCode
-    };
-
-    const tracking = tenant.monthlyPaymentTracking;
-    const currentBreakdown = tracking?.breakdown || {};
-    const targetMonth = getCurrentMonth();
-
-    // Fetch unit and property to get latest water bill settings
-    let waterBillAmount = tenant.utilityFees?.waterBill || 0;
-    try {
-      const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode));
-      const unitsSnap = await getDocs(unitsQuery);
-
-      if (!unitsSnap.empty) {
-        const unitData = unitsSnap.docs[0].data();
-        const propertySnap = await getDoc(doc(db, 'properties', unitData.propertyId));
-
-        if (propertySnap.exists()) {
-          const propData = propertySnap.data();
-          const meterType = propData.waterMeterSettings?.meterType || 'single';
-
-          if (meterType === 'individual') {
-            // Fetch from water_bills collection
-            const waterDocSnap = await getDoc(doc(db, 'water_bills', `${unitData.propertyId}_${targetMonth}`));
-            if (waterDocSnap.exists()) {
-              const billedUnit = waterDocSnap.data().bills?.find(b =>
-                String(b.unitId) === String(unitData.unitId) || String(b.unitCode) === String(unitData.unitId)
-              );
-              if (billedUnit) waterBillAmount = parseFloat(billedUnit.totalBill) || 0;
-            }
-          } else {
-            // Single meter - use property fixed bill
-            const fixedWater = parseFloat(propData.waterMeterSettings?.fixedWaterBill);
-            if (!isNaN(fixedWater)) waterBillAmount = fixedWater;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[REMINDER] Failed to fetch dynamic water bill, using tenant snapshot:', err.message);
-    }
-
-    const debt = {
-      debtCode: tenant.unitCode,
-      storeOwner: { name: tenant.name },
-      remainingAmount: tenant.arrears,
-      breakdown: {
-        rent: currentBreakdown.rent || 0,
-        water: waterBillAmount,
-        utilities: tenant.utilityFees?.garbageFee || 0,
-        deposit: currentBreakdown.deposit || 0
-      }
-    };
-
-    const smsMessage = smsService.generateInvoiceSMS(debt, paymentInfo);
-    const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.id, tenant.unitCode);
-
-    if (!smsResult.success) {
-      throw new Error('Failed to send SMS: ' + smsResult.error);
-    }
-
+    const smsMessage = `Dear ${tenant.name}, your rent for ${tenant.unitCode} is KES ${tenant.arrears}. Pay via Paybill ${settings.paybill} Acc ${tenant.phone}.`;
+    const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.agencyId, tenant.id, tenant.unitCode);
     return { messageId: smsResult.messageId };
   }
 
   async sendConfirmation(tenantId, amount) {
-    if (!amount || amount <= 0) {
-      throw new Error('Valid payment amount required');
-    }
-
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
-
-    if (!tenantSnap.exists()) {
-      throw new Error('Tenant not found');
-    }
-
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
     const tenant = tenantSnap.data();
 
-    const debt = {
-      debtCode: tenant.unitCode,
-      storeOwner: { name: tenant.name },
-      remainingAmount: tenant.arrears || 0,
-    };
-
-    const smsMessage = smsService.generatePaymentConfirmationSMS(debt, amount);
-    const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.id, tenant.unitCode);
-
-    if (!smsResult.success) {
-      throw new Error('Failed to send SMS: ' + smsResult.error);
-    }
-
-    // Update arrears
-    const newArrears = Math.max(0, tenant.arrears - amount);
-    await updateDoc(tenantRef, { arrears: newArrears });
-
+    const smsMessage = `Payment Received: KES ${amount} for ${tenant.unitCode}. Current Arrears: KES ${Math.max(0, tenant.arrears - amount)}.`;
+    const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.agencyId, tenant.id, tenant.unitCode);
+    await updateDoc(tenantRef, { arrears: Math.max(0, tenant.arrears - amount) });
     return { messageId: smsResult.messageId };
   }
 }

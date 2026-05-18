@@ -7,7 +7,13 @@ const requestLogger = (req, res, next) => {
   
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`${req.method} ${req.path} - ${res.statusCode} [${duration}ms]`);
+    const logMessage = `[${new Date().toLocaleTimeString()}] ${req.method} ${req.originalUrl || req.path} - ${res.statusCode} [${duration}ms]`;
+    
+    if (res.statusCode >= 400) {
+      console.log(`❌ ${logMessage}`);
+    } else {
+      console.log(`✅ ${logMessage}`);
+    }
   });
   
   next();

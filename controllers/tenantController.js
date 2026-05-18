@@ -1,59 +1,64 @@
-  
 // ============================================
 // FILE: src/controllers/tenantController.js
 // ============================================
 const tenantService = require('../services/tenantService');
-const { createSuccessResponse } = require('../utils/responseHelper');
+const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 
 class TenantController {
   async getAllTenants(req, res) {
-    const tenants = await tenantService.getAllTenants();
+    const { agencyId, assignedProperties, role } = req.user;
+    const tenants = await tenantService.getAllTenants(
+      agencyId,
+      role === 'admin' ? [] : assignedProperties
+    );
     res.json(tenants);
   }
 
   async getTenantById(req, res) {
-    const tenant = await tenantService.getTenantById(req.params.id);
-    
-    if (!tenant) {
-      return res.status(404).json({
-        success: false,
-        error: 'Tenant not found'
-      });
+    try {
+      const { agencyId } = req.user;
+      const tenant = await tenantService.getTenantById(req.params.id, agencyId);
+      
+      if (!tenant) {
+        return res.status(404).json(createErrorResponse('Tenant not found'));
+      }
+      
+      res.json(createSuccessResponse(tenant));
+    } catch (error) {
+      res.status(403).json(createErrorResponse(error.message));
     }
-    
-    res.json({ id: tenant.id, ...tenant });
   }
 
   async getPaymentStatus(req, res) {
-    const status = await tenantService.getPaymentStatus(req.params.id);
-    
+    const { agencyId } = req.user;
+    const status = await tenantService.getPaymentStatus(req.params.id, agencyId);
     if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'Tenant not found'
-      });
+      return res.status(404).json(createErrorResponse('Tenant not found'));
     }
-    
     res.json(createSuccessResponse(status));
   }
 
   async createTenant(req, res) {
-    const result = await tenantService.createTenant(req.body);
+    const { agencyId } = req.user;
+    const result = await tenantService.createTenant({ ...req.body, agencyId });
     res.json(createSuccessResponse(result, 'Tenant created successfully'));
   }
 
   async deleteTenant(req, res) {
-    const result = await tenantService.deleteTenant(req.params.tenantId);
+    const { agencyId } = req.user;
+    const result = await tenantService.deleteTenant(req.params.tenantId, agencyId);
     res.json(createSuccessResponse(result, 'Tenant deleted successfully'));
   }
 
   async sendReminder(req, res) {
-    const result = await tenantService.sendReminder(req.params.id);
+    const { agencyId } = req.user;
+    const result = await tenantService.sendReminder(req.params.id, agencyId);
     res.json(createSuccessResponse(result, 'Reminder sent'));
   }
 
   async sendConfirmation(req, res) {
-    const result = await tenantService.sendConfirmation(req.params.id, req.body.amount);
+    const { agencyId } = req.user;
+    const result = await tenantService.sendConfirmation(req.params.id, req.body.amount, agencyId);
     res.json(createSuccessResponse(result, 'Confirmation sent'));
   }
 }

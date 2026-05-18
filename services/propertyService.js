@@ -9,16 +9,56 @@ const {
   doc,
   writeBatch,
   setDoc,
-  serverTimestamp, // ← Important: for accurate createdAt
+  serverTimestamp,
+  query,
+  where,
+  arrayUnion,
 } = require('firebase/firestore');
 
 class PropertyService {
-  async getAllProperties() {
-    const snapshot = await getDocs(collection(db, 'properties'));
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  async getAllProperties(agencyId, assignedProperties = [], userUid = null) {
+    let properties = [];
+
+    if (userUid && assignedProperties) {
+      // Subagent Case: Merge assigned properties and created properties
+      // Query 1: Assigned properties
+      let assignedSnap = { docs: [] };
+      if (assignedProperties.length > 0) {
+        const q1 = query(
+          collection(db, 'properties'),
+          where('agencyId', '==', agencyId),
+          where('propertyId', 'in', assignedProperties)
+        );
+        assignedSnap = await getDocs(q1);
+      }
+
+      // Query 2: Created properties
+      const q2 = query(
+        collection(db, 'properties'),
+        where('agencyId', '==', agencyId),
+        where('createdBy', '==', userUid)
+      );
+      const createdSnap = await getDocs(q2);
+
+      // Merge and deduplicate
+      const propMap = new Map();
+      assignedSnap.docs.forEach(doc => propMap.set(doc.id, { id: doc.id, ...doc.data() }));
+      createdSnap.docs.forEach(doc => propMap.set(doc.id, { id: doc.id, ...doc.data() }));
+      properties = Array.from(propMap.values());
+    } else {
+      // Admin Case: All properties for agency
+      const q = query(
+        collection(db, 'properties'),
+        where('agencyId', '==', agencyId)
+      );
+      const snapshot = await getDocs(q);
+      properties = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    }
+
+    return properties;
   }
 
-  async getPropertyById(id) {
+  async getPropertyById(id, agencyId) {
     const start = Date.now();
     const propertyRef = doc(db, 'properties', id);
     const propertySnap = await getDoc(propertyRef);
@@ -28,6 +68,11 @@ class PropertyService {
     }
 
     const propertyData = propertySnap.data();
+
+    // Security Check: Ensure property belongs to agency
+    if (agencyId && propertyData.agencyId !== agencyId) {
+      throw new Error('Unauthorized: Property does not belong to your agency');
+    }
     const unitIds = propertyData.propertyUnitIds || [];
 
     const unitRefs = unitIds.map(uid => doc(db, 'units', uid));
@@ -55,36 +100,47 @@ class PropertyService {
         };
       });
 
-    // For properties with individual meters, exclude water bills from base revenue
-    // as they are calculated dynamically each month
     const waterMeterType = propertyData.waterMeterSettings?.meterType || 'single';
     const includeWaterInRevenue = waterMeterType === 'single';
 
-    const recalculatedRevenue = units.reduce((sum, unit) => {
-      // Revenue calculation includes recurring monthly fees, not deposit
+    // Fetch tenant names for display
+    const tenantsWithNames = await Promise.all(units.map(async (u) => {
+      if (u.tenantId) {
+        const tSnap = await getDoc(doc(db, 'tenants', u.tenantId));
+        if (tSnap.exists()) {
+          return { ...u, tenantName: tSnap.data().name };
+        }
+      }
+      return { ...u, tenantName: null };
+    }));
+
+    const recalculatedRevenue = tenantsWithNames.reduce((sum, unit) => {
+      if (!unit.tenantId) return sum; // Only count occupied units for expected revenue
       const waterBill = includeWaterInRevenue ? (unit.utilityFees?.waterBill || 0) : 0;
       const electricityBill = unit.utilityFees?.electricityBill || 0;
-      const total = sum + (unit.rentAmount || 0) + (unit.utilityFees?.garbageFee || 0) + waterBill + electricityBill;
-      console.log(`[DEBUG_PROPERTY] ${unit.unitId} - Rent: ${unit.rentAmount}, G: ${unit.utilityFees.garbageFee}, W: ${waterBill}, E: ${electricityBill}, Total: ${total}`);
-      return total;
+      return sum + (unit.rentAmount || 0) + (unit.utilityFees?.garbageFee || 0) + waterBill + electricityBill;
     }, 0);
 
-    const vacantCount = units.filter(u => u.isVacant).length;
+    const occupiedCount = tenantsWithNames.filter(u => u.tenantId).length;
+    const vacantCount = tenantsWithNames.length - occupiedCount;
 
     return {
       propertyId: propertyData.propertyId,
       propertyName: propertyData.propertyName,
-      propertyUnitsTotal: units.length,
+      address: propertyData.address || propertyData.location || '',
+      propertyUnitsTotal: tenantsWithNames.length,
       propertyRevenueTotal: recalculatedRevenue,
+      expectedMonthlyRevenue: recalculatedRevenue, // For frontend compatibility
       propertyVacantUnits: vacantCount,
-      propertyOccupiedUnits: units.length - vacantCount,
+      propertyOccupiedUnits: occupiedCount,
       caretaker: propertyData.caretaker || {},
       owner: propertyData.owner || {},
       waterMeterSettings: propertyData.waterMeterSettings || { meterType: 'single', costPerUnit: 95 },
       electricitySettings: propertyData.electricitySettings || {},
       agencyCommission: propertyData.agencyCommission !== undefined ? propertyData.agencyCommission : 8,
       createdAt: propertyData.createdAt?.toDate?.() || null,
-      units,
+      createdBy: propertyData.createdBy || null,
+      units: tenantsWithNames,
       queryDurationMs: Date.now() - start,
     };
   }
@@ -92,8 +148,33 @@ class PropertyService {
   /**
    * Create a new property + units with proper createdAt timestamps
    */
-  async createProperty({ propertyName, units, caretaker, owner, waterMeterSettings, electricitySettings }) {
+  async createProperty(agencyId, userUid, { propertyName, address, units, caretaker, owner, waterMeterSettings, electricitySettings }) {
     const start = Date.now();
+    
+    // 1. Fetch Subscription Limits
+    const agencyRef = doc(db, 'agencies', agencyId);
+    const agencySnap = await getDoc(agencyRef);
+    const agencyData = agencySnap.exists() ? agencySnap.data() : {};
+    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 2, unitsLimit: 10 };
+    const propertiesLimit = subscription.propertiesLimit || 2;
+    const unitsLimit = subscription.unitsLimit || 10;
+
+    // 2. Enforce Property Limit
+    const propsQ = query(collection(db, 'properties'), where('agencyId', '==', agencyId));
+    const propsSnap = await getDocs(propsQ);
+    if (propsSnap.docs.length >= propertiesLimit) {
+      throw new Error(`Plan Limit Exceeded: You have reached your limit of ${propertiesLimit} properties under your current subscription. Please upgrade your plan in the Billing dashboard to add more.`);
+    }
+
+    // 3. Enforce Unit Limit
+    const unitsQ = query(collection(db, 'units'), where('agencyId', '==', agencyId));
+    const unitsSnap = await getDocs(unitsQ);
+    const currentUnitsCount = unitsSnap.docs.length;
+    const newUnitsCount = units?.length || 0;
+    if (currentUnitsCount + newUnitsCount > unitsLimit) {
+      throw new Error(`Plan Limit Exceeded: Adding ${newUnitsCount} units will exceed your plan limit of ${unitsLimit} units (Currently using ${currentUnitsCount}/${unitsLimit}). Please upgrade your plan in the Billing dashboard.`);
+    }
+
     const batch = writeBatch(db);
     const propertyRef = doc(collection(db, 'properties'));
     const propertyId = propertyRef.id;
@@ -101,7 +182,7 @@ class PropertyService {
 
     let totalRevenue = 0;
 
-    const now = serverTimestamp(); // ← Firestore server time (accurate & secure)
+    const now = serverTimestamp();
 
     units.forEach((unit) => {
       const unitId = unit.unitId;
@@ -114,17 +195,16 @@ class PropertyService {
       const water = parseFloat(unit.utilityFees?.waterBill) || 0;
       const electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
 
-      // Ensure creation captures unitName if provided
       const unitName = unit.unitName || unit.unitId;
 
-      const unitTotal = rent + garbage + water + electricity; // Revenue excludes deposit
+      const unitTotal = rent + garbage + water + electricity;
       totalRevenue += unitTotal;
-      console.log(`[DEBUG_CREATE] Unit ${unitId}: R:${rent} G:${garbage} W:${water} E:${electricity} = ${unitTotal}`);
 
       const unitData = {
         unitId,
-        unitName, // Added
+        unitName,
         propertyId,
+        agencyId, // Save agencyId on unit too
         isVacant: true,
         category: unit.category || 'Standard',
         rentAmount: rent,
@@ -139,11 +219,14 @@ class PropertyService {
     const propertyData = {
       propertyId,
       propertyName,
+      address: address || '',
+      agencyId,
+      createdBy: userUid, // Track who created it
       propertyUnitsTotal: units.length,
       propertyRevenueTotal: totalRevenue,
       propertyUnitIds,
       propertyVacantUnits: units.length,
-      agencyCommission: 8, // Default 8% for new properties
+      agencyCommission: 8,
       createdAt: now,
     };
 
@@ -176,6 +259,15 @@ class PropertyService {
     }
 
     batch.set(propertyRef, propertyData);
+
+    // Auto-assign the property to the creator's portfolio
+    if (userUid) {
+      const userRef = doc(db, 'users', userUid);
+      batch.update(userRef, {
+        assignedProperties: arrayUnion(propertyId)
+      });
+    }
+
     await batch.commit();
 
     console.log(`[SUCCESS] Property created: ${propertyName} | ${units.length} units | ID: ${propertyId}`);
@@ -188,13 +280,35 @@ class PropertyService {
     };
   }
 
-  async updateProperty(id, { propertyName, units, caretaker, owner, waterMeterSettings, electricitySettings, agencyCommission }) {
+  async updateProperty(id, { propertyName, address, units, caretaker, owner, waterMeterSettings, electricitySettings, agencyCommission }) {
     const start = Date.now();
     const propertyRef = doc(db, 'properties', id);
     const propertySnap = await getDoc(propertyRef);
 
     if (!propertySnap.exists()) {
       return null;
+    }
+
+    const oldPropertyData = propertySnap.data();
+    const oldAgencyId = oldPropertyData.agencyId;
+
+    // 1. Fetch Subscription Limits
+    const agencyRef = doc(db, 'agencies', oldAgencyId);
+    const agencySnap = await getDoc(agencyRef);
+    const agencyData = agencySnap.exists() ? agencySnap.data() : {};
+    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 2, unitsLimit: 10 };
+    const unitsLimit = subscription.unitsLimit || 10;
+
+    // 2. Count existing units that don't belong to this property, and add the updated list count
+    const unitsQ = query(collection(db, 'units'), where('agencyId', '==', oldAgencyId));
+    const unitsSnap = await getDocs(unitsQ);
+    
+    // Count how many units belong to OTHER properties
+    const otherUnitsCount = unitsSnap.docs.filter(docSnap => docSnap.data().propertyId !== id).length;
+    const newUnitsCount = units?.length || 0;
+    
+    if (otherUnitsCount + newUnitsCount > unitsLimit) {
+      throw new Error(`Plan Limit Exceeded: Modifying this property to have ${newUnitsCount} units will exceed your plan limit of ${unitsLimit} units (Currently using ${otherUnitsCount} units in other properties). Please upgrade your plan in the Billing dashboard.`);
     }
 
     const batch = writeBatch(db);
@@ -236,6 +350,7 @@ class PropertyService {
 
     const propertyUpdateData = {
       propertyName,
+      address: address || '',
       propertyRevenueTotal: totalRevenue,
       propertyOccupiedUnits: units.length - vacantCount,
       agencyCommission: agencyCommission !== undefined ? parseFloat(agencyCommission) : (propertySnap.data().agencyCommission !== undefined ? propertySnap.data().agencyCommission : 8),
@@ -314,15 +429,11 @@ class PropertyService {
     // Handle water meter reading if provided
     if (waterMeterReading !== null) {
       updateData.waterMeterReading = waterMeterReading;
-
-      // Add to water meter readings history
       const now = new Date();
       const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const recordedAtTimestamp = now.getTime(); // Use milliseconds timestamp instead of serverTimestamp
+      const recordedAtTimestamp = now.getTime();
 
       const existingReadings = unitSnap.data().waterMeterReadings || [];
-
-      // Update or add reading for current month
       const readingIndex = existingReadings.findIndex(r => r.month === monthYear);
       if (readingIndex >= 0) {
         existingReadings[readingIndex] = {
@@ -337,7 +448,6 @@ class PropertyService {
           recordedAt: recordedAtTimestamp,
         });
       }
-
       updateData.waterMeterReadings = existingReadings;
     }
 
@@ -364,35 +474,20 @@ class PropertyService {
 
   async deleteProperty(propertyId) {
     const start = Date.now();
-
-    // 1. Fetch property details to check occupancy
     const property = await this.getPropertyById(propertyId);
-    if (!property) {
-      throw new Error('Property not found');
-    }
+    if (!property) throw new Error('Property not found');
 
-    // 2. Check for active tenants
     const hasActiveTenants = property.units.some(unit => !unit.isVacant);
-    if (hasActiveTenants) {
-      throw new Error('Cannot delete property with active tenants. Please remove tenants first.');
-    }
+    if (hasActiveTenants) throw new Error('Cannot delete property with active tenants.');
 
-    // 3. Batch delete units and property
     const batch = writeBatch(db);
-
-    // Delete all units
     property.units.forEach(unit => {
       const unitRef = doc(db, 'units', unit.unitId);
       batch.delete(unitRef);
     });
-
-    // Delete property document
     const propertyRef = doc(db, 'properties', propertyId);
     batch.delete(propertyRef);
-
     await batch.commit();
-
-    console.log(`[SUCCESS] Property deleted: ${propertyId} | Duration: ${Date.now() - start}ms`);
     return { success: true };
   }
 
