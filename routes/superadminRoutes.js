@@ -60,7 +60,7 @@ router.post('/send-subscription-reminder', async (req, res) => {
 
     const businessName = agencyData.name || settings.businessName || settings.agencyName || "Mwaura Properties";
 
-    const msg = `Dear ${adminName}, your KodiPay subscription for ${businessName} (${formattedPlanName}) is due. Please clear KSh ${planPrice.toLocaleString()} to Paybill 522533 (Acct: KODIPAY) to maintain active access. Support: 0743466032.`;
+    const msg = `Dear ${adminName}, your KodiPay subscription for ${businessName} (${formattedPlanName}) is due. Please log in to your account and pay from the billing board to maintain active access. Support: 0743466032.`;
 
     let smsStatus = 'skipped';
     let emailStatus = 'skipped';
@@ -92,32 +92,24 @@ router.post('/send-subscription-reminder', async (req, res) => {
             <div style="padding: 20px; background-color: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; margin-bottom: 25px;">
               <p style="font-size: 15px; color: #1e293b; margin-top: 0;">Dear <strong>${adminName}</strong>,</p>
               <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-                This is an official administrative reminder that the subscription period for your agency platform <strong>${businessName}</strong> is due for renewal.
+                This is an official administrative reminder that the subscription period for your agency platform <strong>${businessName}</strong> is due for renewal. Please log in to your account and pay from the billing section to avoid any system disruptions.
               </p>
             </div>
 
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px;">
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 14px;">
               <tr style="border-bottom: 1px solid #f1f5f9;">
                 <td style="padding: 10px 0; color: #64748b; font-weight: 600;">Licensing Plan</td>
                 <td style="padding: 10px 0; color: #0f172a; font-weight: 700; text-align: right;">${formattedPlanName}</td>
               </tr>
-              <tr style="border-bottom: 1px solid #f1f5f9;">
+              <tr>
                 <td style="padding: 10px 0; color: #64748b; font-weight: 600;">Amount Due</td>
                 <td style="padding: 10px 0; color: #16a34a; font-weight: 700; text-align: right;">KSh ${planPrice.toLocaleString()}</td>
               </tr>
-              <tr>
-                <td style="padding: 10px 0; color: #64748b; font-weight: 600;">Payment Channel</td>
-                <td style="padding: 10px 0; color: #0f172a; font-weight: 700; text-align: right;">Lipa Na M-PESA Paybill</td>
-              </tr>
-              <tr>
-                <td style="padding: 10px 0; color: #64748b; font-weight: 600;">Paybill Number</td>
-                <td style="padding: 10px 0; color: #007aff; font-weight: 800; text-align: right;">522533</td>
-              </tr>
-              <tr>
-                <td style="padding: 10px 0; color: #64748b; font-weight: 600;">Account Number</td>
-                <td style="padding: 10px 0; color: #0f172a; font-weight: 700; text-align: right;">KODIPAY</td>
-              </tr>
             </table>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="https://rent-manager-client.onrender.com/dashboard/billing" style="display: inline-block; background-color: #0f172a; color: #ffffff; padding: 12px 28px; font-size: 14px; font-weight: 700; text-decoration: none; border-radius: 8px;">Log In & Pay Now</a>
+            </div>
 
             <div style="padding: 15px; border-left: 4px solid #f59e0b; background-color: #fffbeb; color: #b45309; font-size: 12px; line-height: 1.5; margin-bottom: 30px; border-radius: 4px;">
               <strong>Important:</strong> Please ensure the payment is processed within the next 48 hours to guarantee uninterrupted operations of your portals, SMS dispatches, and rental ledger books.
