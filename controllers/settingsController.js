@@ -37,7 +37,8 @@ class SettingsController {
                 defaultCommissionRate,
                 agencyPlan,
                 smsQuotaUsed,
-                smsQuotaTotal
+                smsQuotaTotal,
+                rentDueDay
             } = req.body;
 
             const updates = {};
@@ -59,6 +60,7 @@ class SettingsController {
             if (agencyPlan !== undefined) updates.agencyPlan = agencyPlan;
             if (smsQuotaUsed !== undefined) updates.smsQuotaUsed = smsQuotaUsed;
             if (smsQuotaTotal !== undefined) updates.smsQuotaTotal = smsQuotaTotal;
+            if (rentDueDay !== undefined) updates.rentDueDay = rentDueDay;
 
             if (Object.keys(updates).length === 0) {
                 return res.status(400).json(createErrorResponse('No valid settings provided to update'));

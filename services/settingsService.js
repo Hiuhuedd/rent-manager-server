@@ -55,6 +55,7 @@ class SettingsService {
                     agencyPlan: agencyPlan || 'starter',
                     smsQuotaUsed: smsQuotaUsed,
                     smsQuotaTotal: smsQuotaTotal,
+                    rentDueDay: 5,
                     
                     updatedAt: null,
                 };
@@ -87,6 +88,7 @@ class SettingsService {
                 agencyPlan: data.agencyPlan || agencyPlan || 'starter',
                 smsQuotaUsed: data.smsQuotaUsed !== undefined ? data.smsQuotaUsed : smsQuotaUsed,
                 smsQuotaTotal: data.smsQuotaTotal !== undefined ? data.smsQuotaTotal : smsQuotaTotal,
+                rentDueDay: data.rentDueDay || 5,
                 
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
