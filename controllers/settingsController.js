@@ -26,7 +26,18 @@ class SettingsController {
                 customerServiceNumber,
                 reminderConfig,
                 templates,
-                onboardingCompleted
+                onboardingCompleted,
+                
+                defaultCurrency,
+                timezone,
+                brandAccent,
+                paymentMethods,
+                smsTemplates,
+                penalties,
+                defaultCommissionRate,
+                agencyPlan,
+                smsQuotaUsed,
+                smsQuotaTotal
             } = req.body;
 
             const updates = {};
@@ -37,6 +48,17 @@ class SettingsController {
             if (reminderConfig !== undefined) updates.reminderConfig = reminderConfig;
             if (templates !== undefined) updates.templates = templates;
             if (onboardingCompleted !== undefined) updates.onboardingCompleted = onboardingCompleted;
+            
+            if (defaultCurrency !== undefined) updates.defaultCurrency = defaultCurrency;
+            if (timezone !== undefined) updates.timezone = timezone;
+            if (brandAccent !== undefined) updates.brandAccent = brandAccent;
+            if (paymentMethods !== undefined) updates.paymentMethods = paymentMethods;
+            if (smsTemplates !== undefined) updates.smsTemplates = smsTemplates;
+            if (penalties !== undefined) updates.penalties = penalties;
+            if (defaultCommissionRate !== undefined) updates.defaultCommissionRate = defaultCommissionRate;
+            if (agencyPlan !== undefined) updates.agencyPlan = agencyPlan;
+            if (smsQuotaUsed !== undefined) updates.smsQuotaUsed = smsQuotaUsed;
+            if (smsQuotaTotal !== undefined) updates.smsQuotaTotal = smsQuotaTotal;
 
             if (Object.keys(updates).length === 0) {
                 return res.status(400).json(createErrorResponse('No valid settings provided to update'));
