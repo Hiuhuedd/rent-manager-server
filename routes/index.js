@@ -22,6 +22,7 @@ const userRoutes = require('./userRoutes');
 
 const billingRoutes = require('./billingRoutes');
 const clientRoutes = require('./clientRoutes');
+const superadminRoutes = require('./superadminRoutes');
 
 router.use('/properties', propertyRoutes);
 router.use('/tenants', tenantRoutes);
@@ -38,5 +39,6 @@ router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/billing', billingRoutes);
 router.use('/clients', clientRoutes);
+router.use('/superadmin', superadminRoutes);
 
 module.exports = router;
