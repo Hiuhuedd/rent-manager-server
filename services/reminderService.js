@@ -133,17 +133,22 @@ class ReminderService {
 
         // 2. Select the template (custom from Settings, or our sleek minimal default)
         const template = settings.smsTemplates?.rentDue || 
-            'Dear {tenantName}, rent for {propertyName} unit {unitName} is due. Please pay KSh {amount} via {paybill}. Support: {customerServiceNumber}';
+            'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Support: {customerServiceNumber}';
 
         // 3. Perform placeholders replacement
         const message = template
             .replace(/{tenantName}/g, name)
-            .replace(/{propertyName}/g, tenant.propertyName || tenant.propertyCode || 'your building')
+            .replace(/{propertyName}/g, '')
             .replace(/{unitCode}/g, unitCode)
             .replace(/{unitName}/g, unitCode) // Support both wildcards {unitName} and {unitCode}
             .replace(/{amount}/g, amountDue.toLocaleString())
             .replace(/{paybill}/g, paybillString)
-            .replace(/{customerServiceNumber}/g, settings.customerServiceNumber || '+254 700 123 456');
+            .replace(/{customerServiceNumber}/g, settings.customerServiceNumber || '+254 700 123 456')
+            .replace(/\s+for\s+your\s+building/gi, '')
+            .replace(/\s+for\s+''/g, '')
+            .replace(/\s+for\s+""/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
 
         return message;
     }
