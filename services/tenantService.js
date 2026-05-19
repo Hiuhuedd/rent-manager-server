@@ -363,9 +363,19 @@ class TenantService {
     const tenant = tenantSnap.data();
 
     const settingsSnap = await getDoc(doc(db, 'settings', tenant.agencyId || 'default'));
-    const settings = settingsSnap.exists() ? settingsSnap.data() : { paybill: '4082260' };
+    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
 
-    const smsMessage = `Dear ${tenant.name}, your rent for ${tenant.unitCode} is KES ${tenant.arrears}. Pay via Paybill ${settings.paybill} Acc ${tenant.phone}.`;
+    const reminderService = require('./reminderService');
+    const tenantDataForSMS = {
+      name: tenant.name,
+      unitName: tenant.unitCode || '',
+      expected: tenant.arrears || 0,
+      arrears: tenant.arrears || 0,
+      phone: tenant.phone || '',
+      customerServiceNumber: settings.customerServiceNumber || ''
+    };
+
+    const smsMessage = reminderService.generateReminderMessage(tenantDataForSMS, settings);
     const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.agencyId, tenant.id, tenant.unitCode);
     return { messageId: smsResult.messageId };
   }
@@ -455,8 +465,28 @@ class TenantService {
 
     // Send SMS notifying the tenant of the applied penalty
     if (sendSMS && tenant.phone) {
-      const paybill = settings.paybill || '522533';
-      const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via Paybill ${paybill}, Acc ${tenant.phone}.`;
+      let paybillString = '';
+      const methods = settings.paymentMethods || {};
+      const activeMethods = [];
+
+      if (methods.mpesaActive) {
+          const channelType = methods.mpesaType === 'till' ? 'Till' : 'Paybill';
+          activeMethods.push(`M-Pesa ${channelType} ${methods.mpesaNumber || settings.paybill || '522533'}`);
+      }
+      if (methods.bankActive) {
+          activeMethods.push(`${methods.bankName || 'Bank'} A/C ${methods.bankAccountNumber || ''}`);
+      }
+      if (methods.cashActive && activeMethods.length === 0) {
+          activeMethods.push('Cash remittance');
+      }
+
+      if (activeMethods.length > 0) {
+          paybillString = activeMethods.join(' or ');
+      } else {
+          paybillString = `Paybill ${settings.paybill || '522533'}`;
+      }
+
+      const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via ${paybillString}, Acc ${tenant.phone}.`;
       
       try {
         await smsService.sendSMS(tenant.phone, smsMessage, agencyId, 'system_penalty', tenantId);
