@@ -313,7 +313,7 @@ class PaymentService {
 
   async getOverduePayments(agencyId, month, assignedProperties = []) {
     const report = await this.getMonthlyReport(agencyId, month, assignedProperties);
-    const overdue = report.tenants.filter(t => t.status !== PAYMENT_STATUS.PAID);
+    const overdue = report.tenants.filter(t => t.status !== PAYMENT_STATUS.PAID && t.remaining > 0);
     return {
       month: report.month,
       count: overdue.length,
@@ -355,9 +355,16 @@ class PaymentService {
         
         // Use agency settings for Paybill
         const settings = await require('./settingsService').getSettings(agencyId);
-        const paybill = settings.paybill || '522533';
+        
+        // Prepare tenant data structure for reminderService
+        const tenantData = {
+          ...tenant,
+          arrears: overdueTenant.remaining || 0,
+          propertyName: property.propertyName || overdueTenant.propertyName || 'your building'
+        };
 
-        const message = `Hi ${tenant.name}, reminder for ${overdueTenant.unitName}. Total due: KSH ${overdueTenant.remaining.toLocaleString()}. Pay via Paybill ${paybill}, Acc ${tenant.phone}.`;
+        const reminderService = require('./reminderService');
+        const message = reminderService.generateReminderMessage(tenantData, settings);
 
         await smsService.sendSMS(tenant.phone, message, agencyId, 'system', overdueTenant.tenantId);
         results.sent++;
