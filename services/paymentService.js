@@ -272,8 +272,29 @@ class PaymentService {
       const water = parseFloat(unit.utilityFees?.waterBill) || 0;
       const electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
       const deposit = movedInThisMonth ? (parseFloat(unit.depositAmount || unit.deposit) || 0) : 0;
-      
-      const totalExpected = rent + garbage + water + electricity + deposit;
+      const penaltyAmount = tenant.penaltyApplied ? (parseFloat(tenant.penaltyAmount) || 0) : 0;
+
+      const breakdown = {
+        rent,
+        deposit,
+        garbageFee: garbage,
+        waterBill: water,
+        electricityBill: electricity,
+        penalties: penaltyAmount
+      };
+
+      // Merge from tenant's specific tracking if available
+      const currentTracking = tenant.monthlyPaymentTracking || {};
+      if (currentTracking.breakdown) {
+        if (currentTracking.breakdown.rent !== undefined) breakdown.rent = parseFloat(currentTracking.breakdown.rent) || 0;
+        if (currentTracking.breakdown.deposit !== undefined) breakdown.deposit = parseFloat(currentTracking.breakdown.deposit) || 0;
+        if (currentTracking.breakdown.garbage !== undefined) breakdown.garbageFee = parseFloat(currentTracking.breakdown.garbage) || 0;
+        if (currentTracking.breakdown.water !== undefined) breakdown.waterBill = parseFloat(currentTracking.breakdown.water) || 0;
+        if (currentTracking.breakdown.electricity !== undefined) breakdown.electricityBill = parseFloat(currentTracking.breakdown.electricity) || 0;
+        if (currentTracking.breakdown.penalties !== undefined) breakdown.penalties = parseFloat(currentTracking.breakdown.penalties) || 0;
+      }
+
+      const totalExpected = breakdown.rent + breakdown.deposit + breakdown.garbageFee + breakdown.waterBill + breakdown.electricityBill + breakdown.penalties;
       const totalPaid = tenantPayments.reduce((sum, p) => sum + p.amount, 0);
       const remaining = Math.max(0, totalExpected - totalPaid);
       const overpaid = Math.max(0, totalPaid - totalExpected);
@@ -281,7 +302,7 @@ class PaymentService {
       let status = PAYMENT_STATUS.UNPAID;
       if (totalPaid >= totalExpected) status = PAYMENT_STATUS.PAID;
       else if (totalPaid > 0) status = PAYMENT_STATUS.PARTIAL;
-
+      
       report.summary.totalTenants++;
       report.summary.totalExpected += totalExpected;
       report.summary.totalReceived += totalPaid;
@@ -304,7 +325,8 @@ class PaymentService {
         remainingAmount: remaining,
         arrears: remaining,
         phone: tenant.phone || tenant.phoneNumber || '',
-        payments: tenantPayments
+        payments: tenantPayments,
+        breakdown
       });
     }
 
