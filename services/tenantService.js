@@ -382,7 +382,7 @@ class TenantService {
     return { messageId: smsResult.messageId };
   }
 
-  async applyPenalty(tenantId, agencyId) {
+  async applyPenalty(tenantId, agencyId, sendSMS = true) {
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);
     if (!tenantSnap.exists()) throw new Error('Tenant not found');
@@ -454,7 +454,7 @@ class TenantService {
     await updateDoc(tenantRef, updates);
 
     // Send SMS notifying the tenant of the applied penalty
-    if (tenant.phone) {
+    if (sendSMS && tenant.phone) {
       const paybill = settings.paybill || '522533';
       const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via Paybill ${paybill}, Acc ${tenant.phone}.`;
       

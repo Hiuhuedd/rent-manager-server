@@ -64,7 +64,8 @@ class TenantController {
 
   async applyPenalty(req, res) {
     const { agencyId } = req.user;
-    const result = await tenantService.applyPenalty(req.params.id, agencyId);
+    const sendSMS = req.body?.sendSMS !== false;
+    const result = await tenantService.applyPenalty(req.params.id, agencyId, sendSMS);
     res.json(createSuccessResponse(result, 'Late penalty applied successfully'));
   }
 
