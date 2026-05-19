@@ -8,12 +8,13 @@ const smsService = require('./smsService');
 
 class ReminderService {
     /**
-     * Send payment reminders to all active tenants
+     * Send payment reminders to active tenants (optionally filtered by filterAgencyId)
+     * @param {string} [filterAgencyId=null] - Optional agency ID to filter by
      * @returns {Promise<Object>} Result with success status and count
      */
-    async sendPaymentReminders() {
+    async sendPaymentReminders(filterAgencyId = null) {
         try {
-            console.log('🔔 Starting payment reminder process...');
+            console.log(`🔔 Starting payment reminder process${filterAgencyId ? ` for agency ${filterAgencyId}` : ''}...`);
 
             // Fetch all tenants
             const tenantsRef = collection(db, 'tenants');
@@ -32,6 +33,11 @@ class ReminderService {
             for (const tenantDoc of tenantsSnap.docs) {
                 const tenant = tenantDoc.data();
                 const agencyId = tenant.agencyId || 'app-settings';
+
+                // If filterAgencyId is provided, filter by it
+                if (filterAgencyId && agencyId !== filterAgencyId) {
+                    continue;
+                }
 
                 // Skip if no phone number
                 if (!tenant.phone) {

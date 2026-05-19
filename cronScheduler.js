@@ -3,6 +3,8 @@ const { resetMonthlyPaymentTracking } = require('./smsProcessor');
 const reminderService = require('./services/reminderService');
 const settingsService = require('./services/settingsService');
 const smsQuotaService = require('./services/smsQuotaService');
+const { db } = require('./config/firebase');
+const { collection, getDocs } = require('firebase/firestore');
 
 /**
  * Initialize cron job to reset monthly payments on 1st of every month at 00:01
@@ -62,22 +64,34 @@ const initializeReminderCronJob = () => {
 
   cron.schedule('* * * * *', async () => {
     try {
-      // Fetch reminder config
-      const settings = await settingsService.getSettings();
-      const reminderConfig = settings.reminderConfig || { dayOfMonth: 15, time: '14:10' };
+      // Query all settings documents from settings collection
+      const settingsCollRef = collection(db, 'settings');
+      const settingsSnap = await getDocs(settingsCollRef);
 
-      // Check if we should send reminders now
-      if (reminderService.shouldSendReminders(reminderConfig)) {
-        console.log('\n🔔 PAYMENT REMINDER TRIGGERED');
-        console.log(`   Time: ${new Date().toISOString()}`);
-        console.log(`   Config: Day ${reminderConfig.dayOfMonth} at ${reminderConfig.time}`);
+      if (settingsSnap.empty) {
+        return;
+      }
 
-        const result = await reminderService.sendPaymentReminders();
+      for (const settingsDoc of settingsSnap.docs) {
+        const agencyId = settingsDoc.id;
+        const settingsData = settingsDoc.data();
+        
+        // Skip if no configured reminder or if disabled
+        const reminderConfig = settingsData.reminderConfig || { dayOfMonth: 15, time: '14:10' };
 
-        if (result.success) {
-          console.log(`✅ Reminders sent: ${result.sentCount} successful, ${result.failedCount || 0} failed`);
-        } else {
-          console.error('❌ Reminder sending failed:', result.error);
+        // Check if we should send reminders now for this specific agency
+        if (reminderService.shouldSendReminders(reminderConfig)) {
+          console.log(`\n🔔 PAYMENT REMINDER TRIGGERED FOR AGENCY: ${agencyId}`);
+          console.log(`   Time: ${new Date().toISOString()}`);
+          console.log(`   Config: Day ${reminderConfig.dayOfMonth} at ${reminderConfig.time}`);
+
+          const result = await reminderService.sendPaymentReminders(agencyId);
+
+          if (result.success) {
+            console.log(`✅ Reminders sent for agency ${agencyId}: ${result.sentCount} successful, ${result.failedCount || 0} failed`);
+          } else {
+            console.error(`❌ Reminder sending failed for agency ${agencyId}:`, result.error);
+          }
         }
       }
     } catch (error) {
