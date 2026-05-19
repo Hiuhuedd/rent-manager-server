@@ -205,14 +205,25 @@ class TenantService {
           depositRequired: includeDeposit ? deposit : 0
         };
 
-        const newGlobalArrears = Math.max(0, (tenant.financialSummary?.arrears || tenant.arrears || 0) + totalExpected - carryOver);
+        let newGlobalArrears;
+        let newBalance;
+
+        if (!tenant.monthlyPaymentTracking && isNewTenant) {
+          // First-time tracking initialization for a tenant moving in this month:
+          // The onboarding arrears and balance already include this initial expected month's bill, so do not double count.
+          newGlobalArrears = tenant.arrears || tenant.financialSummary?.arrears || totalExpected;
+          newBalance = tenant.financialSummary?.balance !== undefined ? tenant.financialSummary.balance : -newGlobalArrears;
+        } else {
+          newGlobalArrears = Math.max(0, (tenant.financialSummary?.arrears || tenant.arrears || 0) + totalExpected - carryOver);
+          newBalance = existingBalance - totalExpected;
+        }
         
         await updateDoc(tenantRef, {
           monthlyPaymentTracking: monthlyTracking,
           financialSummary: {
             totalPaid: tenant.financialSummary?.totalPaid || 0,
             arrears: newGlobalArrears,
-            balance: existingBalance - totalExpected
+            balance: newBalance
           },
           arrears: newGlobalArrears,
           updatedAt: new Date().toISOString()
