@@ -54,7 +54,7 @@ class ReminderService {
                     const paybill = settings.paybill || '522533';
 
                     // Generate reminder SMS
-                    const message = this.generateReminderMessage(tenant, paybill);
+                    const message = this.generateReminderMessage(tenant, settings);
 
                     // Send SMS
                     await smsService.sendSMS(
@@ -92,12 +92,12 @@ class ReminderService {
     }
 
     /**
-     * Generate reminder message for a tenant
+     * Generate reminder message for a tenant using custom templates and active payment configurations
      * @param {Object} tenant - Tenant data
-     * @param {string} paybill - Paybill number
+     * @param {Object} settings - Agency settings object
      * @returns {string} SMS message
      */
-    generateReminderMessage(tenant, paybill) {
+    generateReminderMessage(tenant, settings = {}) {
         const name = tenant.name || 'Tenant';
         const unitCode = tenant.unitCode || '';
         const rentAmount = tenant.rentAmount || 0;
@@ -109,7 +109,43 @@ class ReminderService {
         // Use arrears if available, otherwise fall back to rent amount
         const amountDue = arrears > 0 ? arrears : rentAmount;
 
-        return `Hi ${name}, this is a reminder that your rent for ${unitCode} (KES ${amountDue.toLocaleString()}) is due on the 1st. Pay via Paybill ${paybill}, Acc ${accountNumber}.`;
+        // 1. Build dynamic payment instructions string based on active payment methods
+        let paybillString = '';
+        const methods = settings.paymentMethods || {};
+        const activeMethods = [];
+
+        if (methods.mpesaActive) {
+            const channelType = methods.mpesaType === 'till' ? 'Till' : 'Paybill';
+            activeMethods.push(`M-Pesa ${channelType} ${methods.mpesaNumber || settings.paybill || '522533'}`);
+        }
+        if (methods.bankActive) {
+            activeMethods.push(`${methods.bankName || 'Bank'} A/C ${methods.bankAccountNumber || ''} (Name: ${methods.bankBranch || ''})`);
+        }
+        if (methods.cashActive && activeMethods.length === 0) {
+            activeMethods.push('Cash remittance');
+        }
+
+        if (activeMethods.length > 0) {
+            paybillString = activeMethods.join(' or ');
+        } else {
+            paybillString = `Paybill ${settings.paybill || '522533'}`;
+        }
+
+        // 2. Select the template (custom from Settings, or our sleek minimal default)
+        const template = settings.smsTemplates?.rentDue || 
+            'Dear {tenantName}, rent for {propertyName} unit {unitName} is due. Please pay KSh {amount} via {paybill}. Support: {customerServiceNumber}';
+
+        // 3. Perform placeholders replacement
+        const message = template
+            .replace(/{tenantName}/g, name)
+            .replace(/{propertyName}/g, tenant.propertyName || tenant.propertyCode || 'your building')
+            .replace(/{unitCode}/g, unitCode)
+            .replace(/{unitName}/g, unitCode) // Support both wildcards {unitName} and {unitCode}
+            .replace(/{amount}/g, amountDue.toLocaleString())
+            .replace(/{paybill}/g, paybillString)
+            .replace(/{customerServiceNumber}/g, settings.customerServiceNumber || '+254 700 123 456');
+
+        return message;
     }
 
     /**
