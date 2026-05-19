@@ -41,49 +41,64 @@ const authMiddleware = async (req, res, next) => {
 
       req.user = decoded;
       console.log(`🔐 Authenticated (JWT): ${req.user.email || req.user.phone} (${req.user.role})`);
-      return next();
     } catch (jwtErr) {
       // Not a valid custom JWT, fall back to Firebase token check
       console.log('--- Not a custom JWT, checking Firebase token ---');
+      
+      // 2. Fallback: Verify token via Firebase REST API
+      const apiKey = process.env.FIREBASE_API_KEY;
+      const response = await axios.post(
+        `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
+        { idToken: token }
+      );
+
+      if (!response.data.users || response.data.users.length === 0) {
+        throw new Error('Invalid token');
+      }
+
+      const firebaseUser = response.data.users[0];
+      const uid = firebaseUser.localId;
+
+      // 3. Fetch user profile from Firestore
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('uid', '==', uid), limit(1));
+      const userSnap = await getDocs(q);
+
+      if (userSnap.empty) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden: User profile not found. Please complete registration.'
+        });
+      }
+
+      const userData = userSnap.docs[0].data();
+      
+      req.user = {
+        uid: uid,
+        email: firebaseUser.email,
+        role: userData.role || 'subagent',
+        agencyId: userData.agencyId,
+        assignedProperties: userData.assignedProperties || []
+      };
+
+      console.log(`🔐 Authenticated (Firebase): ${req.user.email} (${req.user.role})`);
     }
 
-    // 2. Fallback: Verify token via Firebase REST API
-    const apiKey = process.env.FIREBASE_API_KEY;
-    const response = await axios.post(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
-      { idToken: token }
-    );
-
-    if (!response.data.users || response.data.users.length === 0) {
-      throw new Error('Invalid token');
+    // 4. Enforce Agency Suspension Lock
+    if (req.user && req.user.agencyId && req.user.role !== 'superadmin') {
+      const settingsRef = doc(db, 'settings', req.user.agencyId);
+      const settingsSnap = await getDoc(settingsRef);
+      if (settingsSnap.exists()) {
+        const settings = settingsSnap.data();
+        if (settings.accountStatus === 'Suspended') {
+          return res.status(403).json({
+            success: false,
+            error: 'Suspended: Your agency account is currently suspended. Please contact support.'
+          });
+        }
+      }
     }
 
-    const firebaseUser = response.data.users[0];
-    const uid = firebaseUser.localId;
-
-    // 3. Fetch user profile from Firestore
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('uid', '==', uid), limit(1));
-    const userSnap = await getDocs(q);
-
-    if (userSnap.empty) {
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden: User profile not found. Please complete registration.'
-      });
-    }
-
-    const userData = userSnap.docs[0].data();
-    
-    req.user = {
-      uid: uid,
-      email: firebaseUser.email,
-      role: userData.role || 'subagent',
-      agencyId: userData.agencyId,
-      assignedProperties: userData.assignedProperties || []
-    };
-
-    console.log(`🔐 Authenticated (Firebase): ${req.user.email} (${req.user.role})`);
     next();
   } catch (error) {
     console.error('❌ Auth Middleware Error:', error.response?.data?.error?.message || error.message);
