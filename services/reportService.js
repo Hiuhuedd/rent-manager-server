@@ -311,7 +311,7 @@ class ReportService {
                 // However, generatePropertyReport is heavy. Let's do a lighter aggregaton here.
 
                 // Fetch basic stats
-                const fullReport = await this.generatePropertyReport(property.id, month);
+                const fullReport = await this.generatePropertyReport(property.id, month, agencyId);
 
                 const income = fullReport.financials.income;
                 const expenses = fullReport.financials.expenses;
