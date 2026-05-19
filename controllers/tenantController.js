@@ -61,6 +61,18 @@ class TenantController {
     const result = await tenantService.sendConfirmation(req.params.id, req.body.amount, agencyId);
     res.json(createSuccessResponse(result, 'Confirmation sent'));
   }
+
+  async applyPenalty(req, res) {
+    const { agencyId } = req.user;
+    const result = await tenantService.applyPenalty(req.params.id, agencyId);
+    res.json(createSuccessResponse(result, 'Late penalty applied successfully'));
+  }
+
+  async removePenalty(req, res) {
+    const { agencyId } = req.user;
+    const result = await tenantService.removePenalty(req.params.id, agencyId);
+    res.json(createSuccessResponse(result, 'Late penalty removed successfully'));
+  }
 }
 
 module.exports = new TenantController();

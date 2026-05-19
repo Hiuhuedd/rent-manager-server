@@ -265,10 +265,10 @@ class TenantService {
         propertyName: propertyDoc.exists() ? propertyDoc.data().propertyName : 'Unknown',
         unitCategory: unit.category || 'Unknown',
       },
-      tenantStatus: 'active',
       moveInDate: tenantData.moveInDate || now,
       createdAt: now,
       updatedAt: now,
+      rentDueDay: tenantData.rentDueDay || 1,
       rentDeposit: {
         amount: tenantData.isExistingTenant ? 0 : (unit.depositAmount || 0),
         status: tenantData.isExistingTenant ? DEPOSIT_STATUS.NOT_REQUIRED : DEPOSIT_STATUS.PENDING,
@@ -380,6 +380,124 @@ class TenantService {
     const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.agencyId, tenant.id, tenant.unitCode);
     await updateDoc(tenantRef, { arrears: Math.max(0, tenant.arrears - amount) });
     return { messageId: smsResult.messageId };
+  }
+
+  async applyPenalty(tenantId, agencyId) {
+    const tenantRef = doc(db, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantRef);
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
+
+    const tenant = tenantSnap.data();
+    if (tenant.agencyId !== agencyId) throw new Error('Unauthorized');
+    if (tenant.penaltyApplied) throw new Error('Penalty has already been applied to this tenant');
+
+    // Fetch agency settings to calculate penalty
+    const settingsSnap = await getDoc(doc(db, 'settings', agencyId));
+    const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+    const penaltyConfig = settings.penalties || { active: false, type: 'flat', value: '500' };
+
+    // Calculate penalty amount
+    let penaltyAmount = 0;
+    const value = parseFloat(penaltyConfig.value) || 0;
+    
+    let rentAmount = 0;
+    if (tenant.monthlyPaymentTracking?.breakdown?.rent) {
+      rentAmount = tenant.monthlyPaymentTracking.breakdown.rent;
+    } else {
+      const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode));
+      const unitsSnapshot = await getDocs(unitsQuery);
+      if (!unitsSnapshot.empty) {
+        rentAmount = parseFloat(unitsSnapshot.docs[0].data().rentAmount) || 0;
+      }
+    }
+
+    if (penaltyConfig.type === 'percent') {
+      penaltyAmount = rentAmount * (value / 100);
+    } else {
+      penaltyAmount = value;
+    }
+
+    if (penaltyAmount <= 0) {
+      throw new Error('Late penalty protocol is disabled or penalty value is 0 in settings.');
+    }
+
+    // Apply updates to tenant doc
+    const currentTracking = tenant.monthlyPaymentTracking || {};
+    const updatedExpected = (currentTracking.expectedAmount || 0) + penaltyAmount;
+    const updatedRemaining = (currentTracking.remainingAmount || 0) + penaltyAmount;
+    const updatedArrears = (tenant.arrears || 0) + penaltyAmount;
+
+    const updatedTracking = {
+      ...currentTracking,
+      expectedAmount: updatedExpected,
+      remainingAmount: updatedRemaining,
+      status: updatedRemaining > 0 ? (currentTracking.status === 'paid' ? 'partial' : currentTracking.status) : 'paid',
+    };
+
+    if (updatedTracking.breakdown) {
+      updatedTracking.breakdown.penalties = (updatedTracking.breakdown.penalties || 0) + penaltyAmount;
+    }
+
+    const updates = {
+      penaltyApplied: true,
+      penaltyAmount: penaltyAmount,
+      arrears: updatedArrears,
+      monthlyPaymentTracking: updatedTracking,
+      financialSummary: {
+        totalPaid: tenant.financialSummary?.totalPaid || 0,
+        arrears: updatedArrears,
+        balance: (tenant.financialSummary?.balance || 0) - penaltyAmount
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    await updateDoc(tenantRef, updates);
+    return { success: true, penaltyAmount };
+  }
+
+  async removePenalty(tenantId, agencyId) {
+    const tenantRef = doc(db, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantRef);
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
+
+    const tenant = tenantSnap.data();
+    if (tenant.agencyId !== agencyId) throw new Error('Unauthorized');
+    if (!tenant.penaltyApplied) throw new Error('No penalty has been applied to this tenant');
+
+    const penaltyAmount = tenant.penaltyAmount || 0;
+
+    // Apply updates to remove penalty
+    const currentTracking = tenant.monthlyPaymentTracking || {};
+    const updatedExpected = Math.max(0, (currentTracking.expectedAmount || 0) - penaltyAmount);
+    const updatedRemaining = Math.max(0, (currentTracking.remainingAmount || 0) - penaltyAmount);
+    const updatedArrears = Math.max(0, (tenant.arrears || 0) - penaltyAmount);
+
+    const updatedTracking = {
+      ...currentTracking,
+      expectedAmount: updatedExpected,
+      remainingAmount: updatedRemaining,
+      status: updatedRemaining <= 0 ? 'paid' : (currentTracking.status === 'paid' ? 'partial' : currentTracking.status),
+    };
+
+    if (updatedTracking.breakdown && updatedTracking.breakdown.penalties) {
+      updatedTracking.breakdown.penalties = Math.max(0, updatedTracking.breakdown.penalties - penaltyAmount);
+    }
+
+    const updates = {
+      penaltyApplied: false,
+      penaltyAmount: 0,
+      arrears: updatedArrears,
+      monthlyPaymentTracking: updatedTracking,
+      financialSummary: {
+        totalPaid: tenant.financialSummary?.totalPaid || 0,
+        arrears: updatedArrears,
+        balance: (tenant.financialSummary?.balance || 0) + penaltyAmount
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    await updateDoc(tenantRef, updates);
+    return { success: true };
   }
 }
 

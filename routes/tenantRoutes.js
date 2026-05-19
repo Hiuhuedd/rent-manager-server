@@ -20,5 +20,7 @@ router.post('/', validateTenantInput, asyncHandler(tenantController.createTenant
 router.delete('/:tenantId', asyncHandler(tenantController.deleteTenant));
 router.post('/:id/send-reminder', asyncHandler(tenantController.sendReminder));
 router.post('/:id/send-confirmation', asyncHandler(tenantController.sendConfirmation));
+router.post('/:id/apply-penalty', asyncHandler(tenantController.applyPenalty));
+router.post('/:id/remove-penalty', asyncHandler(tenantController.removePenalty));
 
 module.exports = router;
