@@ -452,6 +452,20 @@ class TenantService {
     };
 
     await updateDoc(tenantRef, updates);
+
+    // Send SMS notifying the tenant of the applied penalty
+    if (tenant.phone) {
+      const paybill = settings.paybill || '522533';
+      const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via Paybill ${paybill}, Acc ${tenant.phone}.`;
+      
+      try {
+        await smsService.sendSMS(tenant.phone, smsMessage, agencyId, 'system_penalty', tenantId);
+        console.log(`[SMS] Penalty notification sent to ${tenant.name} (${tenant.phone})`);
+      } catch (smsErr) {
+        console.error(`[SMS] Failed to send penalty SMS to ${tenant.name}:`, smsErr.message);
+      }
+    }
+
     return { success: true, penaltyAmount };
   }
 
