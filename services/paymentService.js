@@ -283,15 +283,18 @@ class PaymentService {
         penalties: penaltyAmount
       };
 
-      // Merge from tenant's specific tracking if available
+      // Merge from tenant's specific tracking if available, healing legacy zero-valued records
       const currentTracking = tenant.monthlyPaymentTracking || {};
       if (currentTracking.breakdown) {
-        if (currentTracking.breakdown.rent !== undefined) breakdown.rent = parseFloat(currentTracking.breakdown.rent) || 0;
-        if (currentTracking.breakdown.deposit !== undefined) breakdown.deposit = parseFloat(currentTracking.breakdown.deposit) || 0;
-        if (currentTracking.breakdown.garbage !== undefined) breakdown.garbageFee = parseFloat(currentTracking.breakdown.garbage) || 0;
-        if (currentTracking.breakdown.water !== undefined) breakdown.waterBill = parseFloat(currentTracking.breakdown.water) || 0;
-        if (currentTracking.breakdown.electricity !== undefined) breakdown.electricityBill = parseFloat(currentTracking.breakdown.electricity) || 0;
-        if (currentTracking.breakdown.penalties !== undefined) breakdown.penalties = parseFloat(currentTracking.breakdown.penalties) || 0;
+        if (currentTracking.breakdown.rent) breakdown.rent = parseFloat(currentTracking.breakdown.rent) || breakdown.rent;
+        if (currentTracking.breakdown.deposit) breakdown.deposit = parseFloat(currentTracking.breakdown.deposit) || breakdown.deposit;
+        if (currentTracking.breakdown.garbageFee) breakdown.garbageFee = parseFloat(currentTracking.breakdown.garbageFee) || breakdown.garbageFee;
+        if (currentTracking.breakdown.garbage !== undefined && currentTracking.breakdown.garbage > 0) breakdown.garbageFee = parseFloat(currentTracking.breakdown.garbage) || breakdown.garbageFee;
+        if (currentTracking.breakdown.waterBill) breakdown.waterBill = parseFloat(currentTracking.breakdown.waterBill) || breakdown.waterBill;
+        if (currentTracking.breakdown.water !== undefined && currentTracking.breakdown.water > 0) breakdown.waterBill = parseFloat(currentTracking.breakdown.water) || breakdown.waterBill;
+        if (currentTracking.breakdown.electricityBill) breakdown.electricityBill = parseFloat(currentTracking.breakdown.electricityBill) || breakdown.electricityBill;
+        if (currentTracking.breakdown.electricity !== undefined && currentTracking.breakdown.electricity > 0) breakdown.electricityBill = parseFloat(currentTracking.breakdown.electricity) || breakdown.electricityBill;
+        if (currentTracking.breakdown.penalties !== undefined) breakdown.penalties = parseFloat(currentTracking.breakdown.penalties) || breakdown.penalties;
       }
 
       const totalExpected = breakdown.rent + breakdown.deposit + breakdown.garbageFee + breakdown.waterBill + breakdown.electricityBill + breakdown.penalties;
