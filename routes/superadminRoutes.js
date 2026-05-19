@@ -3,8 +3,7 @@ const router = express.Router();
 const { doc, getDoc, collection, getDocs, query, where, setDoc } = require('firebase/firestore');
 const { getFirestoreApp } = require('../firebase');
 const emailService = require('../services/emailService');
-const SMSProcessor = require('../smsService');
-const smsService = new SMSProcessor();
+const smsService = require('../smsService');
 
 router.post('/send-subscription-reminder', async (req, res) => {
   try {
