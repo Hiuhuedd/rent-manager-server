@@ -155,8 +155,8 @@ class PropertyService {
     const agencyRef = doc(db, 'agencies', agencyId);
     const agencySnap = await getDoc(agencyRef);
     const agencyData = agencySnap.exists() ? agencySnap.data() : {};
-    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 2, unitsLimit: 10 };
-    const propertiesLimit = subscription.propertiesLimit || 2;
+    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 1, unitsLimit: 10 };
+    const propertiesLimit = subscription.propertiesLimit || 1;
     const unitsLimit = subscription.unitsLimit || 10;
 
     // 2. Enforce Property Limit
@@ -345,7 +345,7 @@ class PropertyService {
     const agencyRef = doc(db, 'agencies', oldAgencyId);
     const agencySnap = await getDoc(agencyRef);
     const agencyData = agencySnap.exists() ? agencySnap.data() : {};
-    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 2, unitsLimit: 10 };
+    const subscription = agencyData.subscription || { activePlan: 'starter_trial', status: 'trial', propertiesLimit: 1, unitsLimit: 10 };
     const unitsLimit = subscription.unitsLimit || 10;
 
     // 2. Count existing units that don't belong to this property, and add the updated list count

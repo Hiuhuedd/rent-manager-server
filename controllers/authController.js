@@ -155,9 +155,15 @@ class AuthController {
         name: agencyName,
         smsStats: {
           monthlySent: 0,
-          monthlyLimit: 2000,
+          monthlyLimit: 20, // Trial SMS Limit
           totalSent: 0,
           lastResetDate: new Date().toISOString()
+        },
+        subscription: {
+          activePlan: 'starter_trial',
+          status: 'trial',
+          propertiesLimit: 1, // Trial Properties Limit
+          unitsLimit: 10
         },
         settings: {
           currency: 'KES',
@@ -166,7 +172,23 @@ class AuthController {
         createdAt: new Date().toISOString()
       });
 
-      // 2. Create User Profile
+      // 2. Create Default Settings document (Required for Superadmin visibility and agency customization)
+      const settingsRef = doc(db, 'settings', agencyId);
+      await setDoc(settingsRef, {
+        agencyName: agencyName,
+        businessName: agencyName,
+        agencyPlan: 'starter_trial',
+        accountStatus: 'Active',
+        paybill: 'None',
+        customerServiceNumber: phone || '',
+        email: email || '',
+        defaultCurrency: 'KES',
+        timezone: 'Africa/Nairobi',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      // 3. Create User Profile
       const uid = 'kp_' + Math.random().toString(36).substr(2, 9);
       const userRef = doc(db, 'users', uid);
       
