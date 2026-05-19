@@ -145,7 +145,7 @@ class ReportService {
         console.log(`[ReportService] Total Rent Collected: ${totalRentCollected}`);
 
         // 2. Fetch Running Costs Magnitude
-        const costsSummary = await runningCostService.getTotalCostsByMonth(propertyId, month);
+        const costsSummary = await runningCostService.getTotalCostsByMonth(propertyId, month, agencyId);
         let totalAllocatedRent = 0;
         const tenantStatusList = propertyTenants.map(tenant => {
             const tenantPayments = payments.filter(p => p.tenantId === tenant.id);
@@ -376,7 +376,9 @@ class ReportService {
         console.log(`[ReportService] Tenant Data:`, { name: tenant.name, unitCode: tenant.unitCode, propertyId: tenant.propertyId });
 
         // 2. Fetch Unit & Property
-        const unitSnap = await getDocs(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)));
+        const unitSnap = tenant.unitCode
+            ? await getDocs(query(collection(db, 'units'), where('unitId', '==', tenant.unitCode)))
+            : { empty: true, docs: [] };
         const unit = unitSnap.empty ? {} : unitSnap.docs[0].data();
         console.log(`[ReportService] Unit found:`, !unitSnap.empty);
 
