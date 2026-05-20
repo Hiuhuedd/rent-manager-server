@@ -1,4 +1,4 @@
-﻿const { getFirestoreApp } = require('./firebase');
+const { getFirestoreApp } = require('./firebase');
 const { doc, getDoc, setDoc, collection, query, where, getDocs, updateDoc, arrayUnion } = require('firebase/firestore');
 const SMSService = require('./smsService');
 
@@ -323,12 +323,15 @@ const processRentalPayment = async (paymentData) => {
       unitCode: tenant.unitCode,
       propertyId: tenant.propertyId,
       propertyName: tenant.propertyDetails?.propertyName || '',
+      agencyId: tenant.agencyId || 'default',
 
       // Payment details
       amount,
       paymentDate: date,
       paymentMonth,
       timestamp,
+      paymentMethod: paymentMethod || 'mpesa',
+      source: 'M-Pesa SMS',
 
       // Sender details
       senderName,

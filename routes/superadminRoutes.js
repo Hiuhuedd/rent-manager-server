@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { doc, getDoc, collection, getDocs, query, where, setDoc } = require('firebase/firestore');
+const { doc, getDoc, collection, getDocs, query, where, setDoc, addDoc } = require('firebase/firestore');
 const { getFirestoreApp } = require('../firebase');
 const emailService = require('../services/emailService');
 const smsService = require('../smsService');
@@ -139,6 +139,109 @@ router.post('/send-subscription-reminder', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Superadmin Reminder API Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// DEMO REQUESTS SYSTEM
+// ============================================
+
+// 1. Submit a new demo request (Public endpoint)
+router.post('/demo-requests', async (req, res) => {
+  try {
+    const { name, email, phone, portfolioSize } = req.body;
+    if (!name || !phone) {
+      return res.status(400).json({ success: false, error: 'Name and Phone number are required' });
+    }
+
+    const db = getFirestoreApp();
+    const demoRequestsRef = collection(db, 'demo_requests');
+    const docRef = await addDoc(demoRequestsRef, {
+      name,
+      email: email || '',
+      phone,
+      portfolioSize: portfolioSize || '10-50',
+      status: 'pending', // 'pending' | 'contacted' | 'completed'
+      createdAt: new Date().toISOString()
+    });
+
+    // Send SMS Alert to Super Admin (0743466032)
+    const superAdminPhone = '0743466032';
+    const alertMsg = `KodiPay Demo Request! Name: ${name}, Phone: ${phone}, Email: ${email || 'N/A'}, Size: ${portfolioSize || '10-50'}.`;
+    
+    let smsStatus = 'skipped';
+    try {
+      console.log(`📤 Dispatching Demo Request SMS alert to ${superAdminPhone}...`);
+      const smsResult = await smsService.sendSMS(superAdminPhone, alertMsg, 'superadmin', 'system', docRef.id);
+      smsStatus = smsResult.success ? 'sent' : `failed: ${smsResult.error}`;
+    } catch (smsErr) {
+      console.error('❌ SMS dispatch error for Demo Alert:', smsErr);
+      smsStatus = `failed: ${smsErr.message}`;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Demo request submitted and alert sent',
+      requestId: docRef.id,
+      sms: smsStatus
+    });
+  } catch (error) {
+    console.error('❌ Demo Request API Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. Fetch all demo requests (Super Admin endpoint)
+router.get('/demo-requests', async (req, res) => {
+  try {
+    const db = getFirestoreApp();
+    const demoRequestsRef = collection(db, 'demo_requests');
+    
+    const querySnapshot = await getDocs(demoRequestsRef);
+    const requests = [];
+    querySnapshot.forEach((doc) => {
+      requests.push({ id: doc.id, ...doc.data() });
+    });
+
+    // Sort by createdAt descending
+    requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return res.status(200).json({
+      success: true,
+      requests
+    });
+  } catch (error) {
+    console.error('❌ Get Demo Requests Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. Update demo request status (Super Admin endpoint)
+router.patch('/demo-requests/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) {
+      return res.status(400).json({ success: false, error: 'Status is required' });
+    }
+
+    const db = getFirestoreApp();
+    const docRef = doc(db, 'demo_requests', id);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) {
+      return res.status(404).json({ success: false, error: 'Demo request not found' });
+    }
+
+    await setDoc(docRef, { ...docSnap.data(), status }, { merge: true });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Status updated successfully'
+    });
+  } catch (error) {
+    console.error('❌ Update Demo Request Error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });

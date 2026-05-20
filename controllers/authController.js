@@ -20,6 +20,7 @@ class AuthController {
       
       // Generate 4-digit OTP
       const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      console.log(`🔑 [TESTING SECURITY ALERT] Generated Verification OTP: ${otp} for ${identifier}`);
       
       // Store OTP in Firestore
       const otpRef = doc(db, 'verifications', identifier);

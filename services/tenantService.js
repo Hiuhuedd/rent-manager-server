@@ -497,7 +497,19 @@ class TenantService {
           paybillString = `Paybill ${settings.paybill || '522533'}`;
       }
 
-      const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via ${paybillString}, Acc ${tenant.phone}.`;
+      const formatPhoneAsAccount = (phone) => {
+        if (!phone) return '';
+        let clean = phone.trim().replace(/\s+/g, '').replace(/\+/g, '');
+        if (clean.startsWith('254')) {
+          clean = '0' + clean.substring(3);
+        }
+        if (!clean.startsWith('0') && clean.length >= 9) {
+          clean = '0' + clean;
+        }
+        return clean;
+      };
+      
+      const smsMessage = `Dear ${tenant.name || 'Tenant'}, a late rent penalty of KES ${penaltyAmount.toLocaleString()} has been applied to unit ${tenant.unitCode || ''}. Breakdown: Rent KES ${rentAmount.toLocaleString()}, Late Penalty KES ${penaltyAmount.toLocaleString()}. Total due: KES ${updatedArrears.toLocaleString()}. Please pay via ${paybillString}, Acc ${formatPhoneAsAccount(tenant.phone)}.`;
       
       try {
         await smsService.sendSMS(tenant.phone, smsMessage, agencyId, 'system_penalty', tenantId);

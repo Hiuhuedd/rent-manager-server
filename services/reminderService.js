@@ -143,6 +143,7 @@ class ReminderService {
             .replace(/{unitName}/g, unitCode) // Support both wildcards {unitName} and {unitCode}
             .replace(/{amount}/g, amountDue.toLocaleString())
             .replace(/{paybill}/g, paybillString)
+            .replace(/{accountNumber}/g, accountNumber)
             .replace(/{customerServiceNumber}/g, settings.customerServiceNumber || '+254 700 123 456')
             .replace(/\s+for\s+your\s+building/gi, '')
             .replace(/\s+for\s+''/g, '')

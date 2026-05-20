@@ -127,9 +127,21 @@ class SMSService {
       maximumFractionDigits: 0
     }).format(amount);
 
+    const formatPhoneAsAccount = (phone) => {
+      if (!phone) return 'Tenant Phone';
+      let clean = phone.trim().replace(/\s+/g, '').replace(/\+/g, '');
+      if (clean.startsWith('254')) {
+        clean = '0' + clean.substring(3);
+      }
+      if (!clean.startsWith('0') && clean.length >= 9) {
+        clean = '0' + clean;
+      }
+      return clean;
+    };
+
     const message = `Hello ${tenantData.name}, ` +
       `Outstanding deposit for Unit ${tenantData.unitCode}: KSH ${formatAmount(tenantData.depositAmount)}. ` +
-      `Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}.`;
+      `Pay: Paybill ${paymentInfo.paybill}, Acc ${formatPhoneAsAccount(paymentInfo.accountNumber)}.`;
 
     console.log('✅ Deposit reminder SMS generated');
     console.log(`   - Message length: ${message.length} characters`);
@@ -205,7 +217,19 @@ class SMSService {
       }
     }
 
-    message += `Pay: Paybill ${paymentInfo.paybill}, Acc ${paymentInfo.accountNumber}. Due soon.`;
+        const formatPhoneAsAccount = (phone) => {
+      if (!phone) return 'Tenant Phone';
+      let clean = phone.trim().replace(/\s+/g, '').replace(/\+/g, '');
+      if (clean.startsWith('254')) {
+        clean = '0' + clean.substring(3);
+      }
+      if (!clean.startsWith('0') && clean.length >= 9) {
+        clean = '0' + clean;
+      }
+      return clean;
+    };
+
+    message += `Pay: Paybill ${paymentInfo.paybill}, Acc ${formatPhoneAsAccount(paymentInfo.accountNumber)}. Due soon.`;
 
     console.log('✅ Invoice SMS generated');
     return message;
