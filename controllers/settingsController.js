@@ -41,7 +41,8 @@ class SettingsController {
                 rentDueDay,
                 integrationTier,
                 mpesaCredentials,
-                payoutRouting
+                payoutRouting,
+                agencyPrefix
             } = req.body;
 
             const updates = {};
@@ -67,6 +68,7 @@ class SettingsController {
             if (integrationTier !== undefined) updates.integrationTier = integrationTier;
             if (mpesaCredentials !== undefined) updates.mpesaCredentials = mpesaCredentials;
             if (payoutRouting !== undefined) updates.payoutRouting = payoutRouting;
+            if (agencyPrefix !== undefined) updates.agencyPrefix = agencyPrefix;
 
             if (Object.keys(updates).length === 0) {
                 return res.status(400).json(createErrorResponse('No valid settings provided to update'));

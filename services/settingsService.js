@@ -2,7 +2,7 @@
 // FILE: src/services/settingsService.js
 // ============================================
 const { db } = require('../config/firebase');
-const { doc, getDoc, setDoc, serverTimestamp } = require('firebase/firestore');
+const { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs } = require('firebase/firestore');
 
 class SettingsService {
     /**
@@ -111,6 +111,7 @@ class SettingsService {
                     securityCredential: ''
                 },
                 payoutRouting: data.payoutRouting || 'manual',
+                agencyPrefix: data.agencyPrefix || agencyId.substring(0, 5).toUpperCase(),
                 
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
@@ -146,6 +147,54 @@ class SettingsService {
             };
         } catch (error) {
             console.error(`[SettingsService] Error updating settings for ${agencyId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find agency by their dedicated M-Pesa Shortcode
+     * @param {string} shortCode
+     */
+    async findAgencyByShortCode(shortCode) {
+        try {
+            const settingsQuery = query(
+                collection(db, 'settings'),
+                where('integrationTier', '==', 'dedicated_mpesa'),
+                where('mpesaCredentials.shortCode', '==', shortCode)
+            );
+            const snapshot = await getDocs(settingsQuery);
+            if (!snapshot.empty) {
+                return snapshot.docs[0].id; // Returns agencyId
+            }
+            return null;
+        } catch (error) {
+            console.error(`[SettingsService] Error finding agency by shortcode ${shortCode}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Find agency by their Golden Paybill Account Prefix
+     * @param {string} billRefNumber
+     */
+    async findAgencyByPrefix(billRefNumber) {
+        try {
+            const ref = billRefNumber.toUpperCase().trim();
+            const settingsQuery = query(
+                collection(db, 'settings'),
+                where('integrationTier', '==', 'kodipay_paybill')
+            );
+            const snapshot = await getDocs(settingsQuery);
+            for (const doc of snapshot.docs) {
+                const settings = doc.data();
+                const prefix = (settings.agencyPrefix || '').toUpperCase();
+                if (prefix && ref.startsWith(prefix)) {
+                    return doc.id; // Returns agencyId
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error(`[SettingsService] Error finding agency by prefix for ${billRefNumber}:`, error);
             throw error;
         }
     }
