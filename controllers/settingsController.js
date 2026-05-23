@@ -38,7 +38,10 @@ class SettingsController {
                 agencyPlan,
                 smsQuotaUsed,
                 smsQuotaTotal,
-                rentDueDay
+                rentDueDay,
+                integrationTier,
+                mpesaCredentials,
+                payoutRouting
             } = req.body;
 
             const updates = {};
@@ -61,6 +64,9 @@ class SettingsController {
             if (smsQuotaUsed !== undefined) updates.smsQuotaUsed = smsQuotaUsed;
             if (smsQuotaTotal !== undefined) updates.smsQuotaTotal = smsQuotaTotal;
             if (rentDueDay !== undefined) updates.rentDueDay = rentDueDay;
+            if (integrationTier !== undefined) updates.integrationTier = integrationTier;
+            if (mpesaCredentials !== undefined) updates.mpesaCredentials = mpesaCredentials;
+            if (payoutRouting !== undefined) updates.payoutRouting = payoutRouting;
 
             if (Object.keys(updates).length === 0) {
                 return res.status(400).json(createErrorResponse('No valid settings provided to update'));

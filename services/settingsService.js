@@ -57,6 +57,17 @@ class SettingsService {
                     smsQuotaTotal: smsQuotaTotal,
                     rentDueDay: 5,
                     
+                    integrationTier: 'manual',
+                    mpesaCredentials: {
+                        consumerKey: '',
+                        consumerSecret: '',
+                        passkey: '',
+                        shortCode: '',
+                        initiatorName: '',
+                        securityCredential: ''
+                    },
+                    payoutRouting: 'manual',
+                    
                     updatedAt: null,
                 };
             }
@@ -89,6 +100,17 @@ class SettingsService {
                 smsQuotaUsed: data.smsQuotaUsed !== undefined ? data.smsQuotaUsed : smsQuotaUsed,
                 smsQuotaTotal: data.smsQuotaTotal !== undefined ? data.smsQuotaTotal : smsQuotaTotal,
                 rentDueDay: data.rentDueDay || 5,
+                
+                integrationTier: data.integrationTier || 'manual',
+                mpesaCredentials: data.mpesaCredentials || {
+                    consumerKey: '',
+                    consumerSecret: '',
+                    passkey: '',
+                    shortCode: '',
+                    initiatorName: '',
+                    securityCredential: ''
+                },
+                payoutRouting: data.payoutRouting || 'manual',
                 
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
