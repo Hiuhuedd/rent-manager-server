@@ -22,7 +22,7 @@ async function findTenantForMpesa(agencyId, msisdn, billRefNumber, prefix = '') 
     cleanAccount = cleanAccount.substring(prefix.length).replace(/^[\s\-]+/, '');
   }
 
-  // 1. Try querying by phone directly
+  // 1. Try querying by phone directly using the sender's MSISDN
   const phoneQuery = query(
     collection(db, 'tenants'),
     where('agencyId', '==', agencyId),
@@ -31,6 +31,20 @@ async function findTenantForMpesa(agencyId, msisdn, billRefNumber, prefix = '') 
   const phoneSnap = await getDocs(phoneQuery);
   if (!phoneSnap.empty) {
     return { id: phoneSnap.docs[0].id, ...phoneSnap.docs[0].data() };
+  }
+
+  // 1.5 Try querying by phone using the BillRefNumber (Account Number as Tenant Phone)
+  const normalizedBillRef = normalizePhoneNumber(cleanAccount);
+  if (normalizedBillRef) {
+    const billRefQuery = query(
+      collection(db, 'tenants'),
+      where('agencyId', '==', agencyId),
+      where('phone', '==', normalizedBillRef)
+    );
+    const billRefSnap = await getDocs(billRefQuery);
+    if (!billRefSnap.empty) {
+      return { id: billRefSnap.docs[0].id, ...billRefSnap.docs[0].data() };
+    }
   }
 
   // 2. Try querying by unitCode directly

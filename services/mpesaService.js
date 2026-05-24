@@ -8,12 +8,15 @@ const smsQuotaService = require('./smsQuotaService');
 const smsService = require('./smsService');
 const emailService = require('./emailService');
 
-// Daraja M-Pesa Credentials provided by user
-const DARAJA_CONSUMER_KEY = 'ogNIHgP7LRN2LjGuKb7ShvCGM6xUHuKubEiiGnmddnNwl7CF';
-const DARAJA_CONSUMER_SECRET = 'blg5AHGBAYzV40oJwfeR9pwByUlQb4nj055x8DfwAJzspOq1bRSlaQafuAkgYB5A';
-const DARAJA_SHORTCODE = '6723519';
-const DARAJA_PASSKEY = 'd61bb261124f727cfad44a8a00708452d517ba453519926f06c102abc298a44f';
-const DARAJA_PARTY_B = '4123906'; // Till Number / Buy Goods PartyB
+// Daraja M-Pesa Credentials (Subscriptions & SMS Top-ups)
+const DARAJA_CONSUMER_KEY = process.env.SUBSCRIPTION_CONSUMER_KEY;
+const DARAJA_CONSUMER_SECRET = process.env.SUBSCRIPTION_CONSUMER_SECRET;
+const DARAJA_SHORTCODE = process.env.SUBSCRIPTION_SHORTCODE;
+const DARAJA_PASSKEY = process.env.SUBSCRIPTION_PASSKEY;
+const DARAJA_PARTY_B = process.env.SUBSCRIPTION_PARTY_B; // Till Number / Buy Goods PartyB
+
+const MPESA_ENV = process.env.MPESA_ENV || 'production'; // 'sandbox' or 'production'
+const DARAJA_BASE_URL = MPESA_ENV === 'sandbox' ? 'https://sandbox.safaricom.co.ke' : 'https://api.safaricom.co.ke';
 
 /**
  * Generate standard YYYYMMDDHHmmss timestamp
@@ -34,7 +37,7 @@ class MpesaService {
    * Request OAuth Access Token from Safaricom Daraja
    */
   async getAccessToken() {
-    const url = 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials';
+    const url = `${DARAJA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`;
     const auth = 'Basic ' + Buffer.from(`${DARAJA_CONSUMER_KEY}:${DARAJA_CONSUMER_SECRET}`).toString('base64');
 
     try {
@@ -55,7 +58,7 @@ class MpesaService {
   async initiateStkPush({ agencyId, amount, phone, type, planId, units, callbackBaseUrl }) {
     try {
       const accessToken = await this.getAccessToken();
-      const url = 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest';
+      const url = `${DARAJA_BASE_URL}/mpesa/stkpush/v1/processrequest`;
       const auth = `Bearer ${accessToken}`;
       const timestamp = getTimestamp();
       

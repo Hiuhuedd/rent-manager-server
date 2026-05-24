@@ -174,27 +174,39 @@ class SettingsService {
     }
 
     /**
-     * Find agency by their Golden Paybill Account Prefix
-     * @param {string} billRefNumber
+     * Find agency by checking if a tenant exists with the matching M-Pesa phone number
+     * @param {string} phoneNumber - The phone number used as BillRefNumber
      */
-    async findAgencyByPrefix(billRefNumber) {
+    async findAgencyByTenantPhone(phoneNumber) {
+        if (!phoneNumber) return null;
         try {
-            const ref = billRefNumber.toUpperCase().trim();
-            const settingsQuery = query(
-                collection(db, 'settings'),
-                where('integrationTier', '==', 'kodipay_paybill')
+            // Phone numbers in M-Pesa usually start with 254 or 0.
+            // We normalize the BillRefNumber to 07... format for consistent lookup
+            let normalized = phoneNumber.toString().trim();
+            if (normalized.startsWith('254')) normalized = '0' + normalized.substring(3);
+            else if (normalized.startsWith('+254')) normalized = '0' + normalized.substring(4);
+
+            const tenantsQuery = query(
+                collection(db, 'tenants'),
+                where('phone', '==', normalized)
             );
-            const snapshot = await getDocs(settingsQuery);
-            for (const doc of snapshot.docs) {
-                const settings = doc.data();
-                const prefix = (settings.agencyPrefix || '').toUpperCase();
-                if (prefix && ref.startsWith(prefix)) {
-                    return doc.id; // Returns agencyId
-                }
+            
+            const snapshot = await getDocs(tenantsQuery);
+            if (!snapshot.empty) {
+                const tenantData = snapshot.docs[0].data();
+                return tenantData.agencyId;
             }
+            
+            // Fallback: match exactly as typed by tenant
+            const exactQuery = query(collection(db, 'tenants'), where('phone', '==', phoneNumber.toString().trim()));
+            const exactSnap = await getDocs(exactQuery);
+            if (!exactSnap.empty) {
+                return exactSnap.docs[0].data().agencyId;
+            }
+
             return null;
         } catch (error) {
-            console.error(`[SettingsService] Error finding agency by prefix for ${billRefNumber}:`, error);
+            console.error(`[SettingsService] Error finding agency by tenant phone ${phoneNumber}:`, error);
             throw error;
         }
     }

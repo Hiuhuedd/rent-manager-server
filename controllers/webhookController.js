@@ -26,16 +26,16 @@ class WebhookController {
 
     try {
       const shortCode = payload.BusinessShortCode;
-      const isGoldenPaybill = shortCode === '4005473';
+      const isGoldenPaybill = shortCode === '4005473' || shortCode === process.env.KODIPAY_MASTER_SHORTCODE;
 
       let agencyId = null;
       let agencyConfig = null;
 
       if (isGoldenPaybill) {
-        agencyId = await settingsService.findAgencyByPrefix(payload.BillRefNumber);
+        agencyId = await settingsService.findAgencyByTenantPhone(payload.BillRefNumber);
         if (!agencyId) {
-          console.warn('❌ Golden Paybill Validation failed: invalid prefix for account', payload.BillRefNumber);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account code prefix" });
+          console.warn('❌ Golden Paybill Validation failed: unregistered tenant phone used as account number', payload.BillRefNumber);
+          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account number" });
         }
       } else {
         agencyId = await settingsService.findAgencyByShortCode(shortCode);
@@ -70,16 +70,16 @@ class WebhookController {
 
     try {
       const shortCode = payload.BusinessShortCode;
-      const isGoldenPaybill = shortCode === '4005473';
+      const isGoldenPaybill = shortCode === '4005473' || shortCode === process.env.KODIPAY_MASTER_SHORTCODE;
 
       let agencyId = null;
       let agencyConfig = null;
 
       if (isGoldenPaybill) {
-        agencyId = await settingsService.findAgencyByPrefix(payload.BillRefNumber);
+        agencyId = await settingsService.findAgencyByTenantPhone(payload.BillRefNumber);
         if (!agencyId) {
-          console.error('❌ Golden Paybill Confirmation failed: invalid prefix for account', payload.BillRefNumber);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account code prefix" });
+          console.error('❌ Golden Paybill Confirmation failed: unregistered tenant phone used as account number', payload.BillRefNumber);
+          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account number" });
         }
       } else {
         agencyId = await settingsService.findAgencyByShortCode(shortCode);
