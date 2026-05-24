@@ -8,7 +8,7 @@ const webhookController = require('../controllers/webhookController');
 const { asyncHandler } = require('../middleware/errorHandler');
 
 router.post('/', asyncHandler(webhookController.processMpesaWebhook));
-router.post('/mpesa/validation', asyncHandler(webhookController.processDarajaValidation));
-router.post('/mpesa/confirmation', asyncHandler(webhookController.processDarajaConfirmation));
+router.post('/gateway/validation', asyncHandler(webhookController.processDarajaValidation));
+router.post('/gateway/confirmation', asyncHandler(webhookController.processDarajaConfirmation));
 
 module.exports = router;

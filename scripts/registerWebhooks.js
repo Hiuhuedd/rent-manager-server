@@ -40,8 +40,8 @@ async function registerUrls() {
         const payload = {
             ShortCode: shortCode,
             ResponseType: 'Completed', // 'Completed' means if KodiPay server times out, Daraja completes the transaction anyway
-            ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhooks/mpesa/confirmation',
-            ValidationURL: 'https://rent-manager-server.onrender.com/api/webhooks/mpesa/validation'
+            ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhooks/gateway/confirmation',
+            ValidationURL: 'https://rent-manager-server.onrender.com/api/webhooks/gateway/validation'
         };
 
         const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v1/registerurl`, payload, {
