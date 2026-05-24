@@ -40,8 +40,8 @@ async function registerUrls() {
         const payload = {
             ShortCode: shortCode,
             ResponseType: 'Completed', // 'Completed' means if KodiPay server times out, Daraja completes the transaction anyway
-            ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhooks/gateway/confirmation',
-            ValidationURL: 'https://rent-manager-server.onrender.com/api/webhooks/gateway/validation'
+            ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/confirmation',
+            ValidationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/validation'
         };
 
         const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v1/registerurl`, payload, {
@@ -53,11 +53,13 @@ async function registerUrls() {
         console.log("\nDaraja will now forward all payments to your Render server!");
 
     } catch (error) {
-        console.error("\n❌ REGISTRATION FAILED:");
+        console.error("\n❌ SCRIPT FAILED:");
         if (error.response) {
-            console.error(error.response.data);
+            console.error(`Status Code: ${error.response.status}`);
+            console.error("Response Data:", JSON.stringify(error.response.data, null, 2));
         } else {
-            console.error(error.message);
+            console.error("Error Message:", error.message);
+            console.error("Full Error:", error);
         }
     }
 }
