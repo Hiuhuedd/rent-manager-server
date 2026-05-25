@@ -80,16 +80,24 @@ class MpesaPayoutService {
       let baseUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://rent-manager-server.onrender.com';
       if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
-      let commandId = 'BusinessToBusinessTransfer'; // default b2b
-      if (type === 'till') commandId = 'BusinessBuyGoods';
-      else if (type === 'paybill') commandId = 'BusinessPayBill';
+      let commandId = 'BusinessToBusinessTransfer';
+      let recieverIdentifierType = '4'; // Default: Organization/Paybill
+      if (type === 'till') {
+        commandId = 'BusinessBuyGoods';
+        recieverIdentifierType = '2'; // Till Number (Buy Goods)
+      } else if (type === 'paybill') {
+        commandId = 'BusinessPayBill';
+        recieverIdentifierType = '4'; // Organization shortcode
+      }
+
+      console.log(`🔧 B2B Config — CommandID: ${commandId}, ReceiverType: ${recieverIdentifierType}`);
 
       const payload = {
         Initiator: credentials.initiatorName,
         SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
         CommandID: commandId,
-        SenderIdentifierType: '4', // Organization
-        RecieverIdentifierType: '4', // Organization
+        SenderIdentifierType: '4',       // Sender is always Paybill (Organization)
+        RecieverIdentifierType: recieverIdentifierType,
         Amount: Math.round(amount),
         PartyA: credentials.shortCode,
         PartyB: receiverShortCode,
