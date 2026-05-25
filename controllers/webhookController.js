@@ -165,6 +165,46 @@ class WebhookController {
       return res.status(200).json({ ResultCode: 1, ResultDesc: "Internal confirmation failure" });
     }
   }
+
+  // B2C / B2B Payout Result Callback (Safaricom fires this after processing the payout)
+  async processDarajaResult(req, res) {
+    console.log('\n📩 === B2C/B2B PAYOUT RESULT CALLBACK ===');
+    const payload = req.body;
+    console.log(JSON.stringify(payload, null, 2));
+
+    try {
+      const result = payload?.Result;
+      const resultCode = result?.ResultCode;
+      const resultDesc = result?.ResultDesc;
+      const conversationId = result?.ConversationID;
+      const origConversationId = result?.OriginatorConversationID;
+      const transactionId = result?.TransactionID;
+
+      if (resultCode === 0) {
+        console.log(`✅ [Payout Result] SUCCESS - ConversationID: ${conversationId}, TransactionID: ${transactionId}`);
+      } else {
+        console.warn(`⚠️ [Payout Result] FAILED - Code: ${resultCode}, Desc: ${resultDesc}, ConversationID: ${origConversationId}`);
+      }
+
+      // Acknowledge Safaricom immediately
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+    } catch (err) {
+      console.error('❌ B2C/B2B Result callback crash:', err.message);
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+    }
+  }
+
+  // B2C / B2B Payout Timeout Callback (Safaricom fires this if no response was received in time)
+  async processDarajaTimeout(req, res) {
+    console.log('\n⏰ === B2C/B2B PAYOUT QUEUE TIMEOUT CALLBACK ===');
+    const payload = req.body;
+    console.log(JSON.stringify(payload, null, 2));
+
+    const conversationId = payload?.Result?.OriginatorConversationID || payload?.ConversationID || 'UNKNOWN';
+    console.warn(`⚠️ [Payout Timeout] Payout timed out in Safaricom queue. ConversationID: ${conversationId}. Manual investigation may be required.`);
+
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+  }
 }
 
 module.exports = new WebhookController();

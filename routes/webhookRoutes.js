@@ -11,5 +11,7 @@ router.post('/', asyncHandler(webhookController.processMpesaWebhook));
 router.get('/register', asyncHandler(webhookController.registerUrls));
 router.post('/gateway/validation', asyncHandler(webhookController.processDarajaValidation));
 router.post('/gateway/confirmation', asyncHandler(webhookController.processDarajaConfirmation));
+router.post('/gateway/result', asyncHandler(webhookController.processDarajaResult));
+router.post('/gateway/timeout', asyncHandler(webhookController.processDarajaTimeout));
 
 module.exports = router;
