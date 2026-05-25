@@ -11,7 +11,7 @@ const DARAJA_BASE_URL = MPESA_ENV === 'sandbox' ? 'https://sandbox.safaricom.co.
 
 class MpesaPayoutService {
   async getAccessToken(consumerKey, consumerSecret) {
-    const url = `${DARAJA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`;
+    const url = `${DARAJA_BASE_URL}/oauth/v2/generate?grant_type=client_credentials`;
     const auth = 'Basic ' + Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
     const response = await axios.get(url, { headers: { Authorization: auth } });
     return response.data.access_token;
