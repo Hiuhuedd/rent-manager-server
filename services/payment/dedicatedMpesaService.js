@@ -6,6 +6,7 @@ const { doc, getDoc, collection, addDoc } = require('firebase/firestore');
 const { findTenantForMpesa } = require('./mpesaPaymentHelper');
 const smsProcessor = require('../../smsProcessor');
 const { normalizePhoneNumber, getPaymentMonth } = smsProcessor;
+const mpesaPayoutService = require('./mpesaPayoutService');
 
 class DedicatedMpesaService {
   /**
@@ -121,6 +122,33 @@ class DedicatedMpesaService {
     // Disburse Landlord Net portion using Agency's B2C/B2B credentials (stub API call for now)
     const refCode = `DED-${payloadRefId()}`;
     await this.recordPayoutInFirestore(tenant.agencyId, property.ownerId, landlord, landlordAmount, landlord.payoutMethod || 'mpesa_b2c', refCode);
+    
+    // Execute Real B2C/B2B
+    try {
+      await this.executeRealPayout(landlordAmount, landlord.payoutMethod || 'mpesa_b2c', landlord.payoutDetails || landlord.phone, refCode, agencyConfig.mpesaCredentials);
+    } catch (err) {
+      console.error('❌ [Dedicated M-Pesa] Failed to execute auto-split payout:', err.message);
+    }
+  }
+
+  async executeRealPayout(amount, method, targetNumber, refCode, credentials) {
+    if (!credentials || !credentials.consumerKey || !credentials.initiatorName) {
+      console.warn('⚠️ [Dedicated M-Pesa] Agency B2C/B2B credentials missing, skipping real execution for', refCode);
+      return;
+    }
+    
+    if (method === 'bank') {
+      console.warn('⚠️ [Dedicated M-Pesa] Bank payouts not implemented automatically. Skipping', refCode);
+      return;
+    }
+
+    if (method === 'mpesa_b2b' || method === 'mpesa_b2b_paybill' || method === 'paybill') {
+      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'paybill', 'KodiPay Payout', refCode);
+    } else if (method === 'mpesa_b2b_till' || method === 'till') {
+      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'till', 'KodiPay Payout', refCode);
+    } else {
+      await mpesaPayoutService.triggerB2C(credentials, amount, targetNumber, 'KodiPay Rent', refCode);
+    }
   }
 
   async recordPayoutInFirestore(agencyId, clientId, landlord, amount, method, refCode) {

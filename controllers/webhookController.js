@@ -24,7 +24,7 @@ class WebhookController {
     try {
       const isProd = process.env.KODIPAY_MASTER_ENV === 'production';
       const baseUrl = isProd ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
-      
+
       const consumerKey = process.env.KODIPAY_MASTER_CONSUMER_KEY;
       const consumerSecret = process.env.KODIPAY_MASTER_CONSUMER_SECRET;
       const shortCode = process.env.KODIPAY_MASTER_SHORTCODE;
@@ -36,20 +36,20 @@ class WebhookController {
       // 1. Get Access Token
       const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
       const tokenResponse = await axios.get(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
-          headers: { Authorization: `Basic ${auth}` }
+        headers: { Authorization: `Basic ${auth}` }
       });
       const accessToken = tokenResponse.data.access_token;
 
       // 2. Register URLs
       const payload = {
-          ShortCode: shortCode,
-          ResponseType: 'Completed',
-          ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/confirmation',
-          ValidationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/validation'
+        ShortCode: shortCode,
+        ResponseType: 'Completed',
+        ConfirmationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/confirmation',
+        ValidationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/validation'
       };
 
-      const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v1/registerurl`, payload, {
-          headers: { Authorization: `Bearer ${accessToken}` }
+      const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v2/registerurl`, payload, {
+        headers: { Authorization: `Bearer ${accessToken}` }
       });
 
       return res.status(200).json({
@@ -58,7 +58,13 @@ class WebhookController {
         data: registerResponse.data
       });
 
+
+
     } catch (error) {
+
+      console.error("❌ FULL ERROR:", JSON.stringify(error.response?.data, null, 2));
+      console.error("❌ STATUS:", error.response?.status);
+      console.error("❌ HEADERS:", error.response?.headers);
       console.error("❌ REGISTRATION FAILED FROM SERVER:", error.response?.data || error.message);
       return res.status(500).json({
         success: false,
@@ -96,7 +102,7 @@ class WebhookController {
       }
 
       agencyConfig = await settingsService.getSettings(agencyId);
-      
+
       let validationResult;
       if (isGoldenPaybill) {
         validationResult = await kodipayPaybillService.processValidation(payload, agencyId, agencyConfig);

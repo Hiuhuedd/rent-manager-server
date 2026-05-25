@@ -265,8 +265,14 @@ class PropertyService {
           } else {
             // Create a new client!
             const newClientRef = doc(collection(db, 'clients'));
-            const payoutMethod = owner.bankDetails?.mpesaNumber ? 'mpesa' : 'bank';
-            const payoutDetails = payoutMethod === 'mpesa' 
+            let payoutMethod = 'bank';
+            if (owner.bankDetails?.mpesaNumber) {
+               const type = owner.bankDetails?.mpesaType || 'b2c';
+               if (type === 'till') payoutMethod = 'mpesa_b2b_till';
+               else if (type === 'paybill') payoutMethod = 'mpesa_b2b_paybill';
+               else payoutMethod = 'mpesa_b2c';
+            }
+            const payoutDetails = payoutMethod !== 'bank'
               ? (owner.bankDetails?.mpesaNumber || owner.phone || '')
               : (owner.bankDetails?.bankName && owner.bankDetails?.accountNumber 
                  ? `${owner.bankDetails.bankName} - Account ${owner.bankDetails.accountNumber}`
@@ -279,6 +285,7 @@ class PropertyService {
               phone: owner.phone || '',
               commissionRate: parseFloat(agencyCommission) || 10,
               payoutMethod,
+              payoutType: owner.bankDetails?.mpesaType || 'b2c',
               payoutDetails,
               notes: `Auto-created during property registration of ${propertyName}`,
               createdAt: new Date().toISOString(),
@@ -441,8 +448,14 @@ class PropertyService {
           } else {
             // Create a new client!
             const newClientRef = doc(collection(db, 'clients'));
-            const payoutMethod = owner.bankDetails?.mpesaNumber ? 'mpesa' : 'bank';
-            const payoutDetails = payoutMethod === 'mpesa' 
+            let payoutMethod = 'bank';
+            if (owner.bankDetails?.mpesaNumber) {
+               const type = owner.bankDetails?.mpesaType || 'b2c';
+               if (type === 'till') payoutMethod = 'mpesa_b2b_till';
+               else if (type === 'paybill') payoutMethod = 'mpesa_b2b_paybill';
+               else payoutMethod = 'mpesa_b2c';
+            }
+            const payoutDetails = payoutMethod !== 'bank'
               ? (owner.bankDetails?.mpesaNumber || owner.phone || '')
               : (owner.bankDetails?.bankName && owner.bankDetails?.accountNumber 
                  ? `${owner.bankDetails.bankName} - Account ${owner.bankDetails.accountNumber}`
@@ -455,6 +468,7 @@ class PropertyService {
               phone: owner.phone || '',
               commissionRate: parseFloat(agencyCommission) || 10,
               payoutMethod,
+              payoutType: owner.bankDetails?.mpesaType || 'b2c',
               payoutDetails,
               notes: `Auto-created during property settings update of ${propertyName || 'property'}`,
               createdAt: new Date().toISOString(),

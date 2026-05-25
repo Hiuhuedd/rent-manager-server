@@ -6,6 +6,16 @@ const { doc, getDoc, collection, addDoc } = require('firebase/firestore');
 const { findTenantForMpesa } = require('./mpesaPaymentHelper');
 const smsProcessor = require('../../smsProcessor');
 const { normalizePhoneNumber, getPaymentMonth } = smsProcessor;
+const mpesaPayoutService = require('./mpesaPayoutService');
+
+// Global KodiPay Master Credentials (from env)
+const MASTER_CREDENTIALS = {
+  consumerKey: process.env.MPESA_MASTER_CONSUMER_KEY || '',
+  consumerSecret: process.env.MPESA_MASTER_CONSUMER_SECRET || '',
+  initiatorName: process.env.MPESA_MASTER_INITIATOR || '',
+  securityCredential: process.env.MPESA_MASTER_SECURITY_CREDENTIAL || '',
+  shortCode: process.env.MPESA_MASTER_SHORTCODE || '4005473'
+};
 
 class KodipayPaybillService {
   /**
@@ -126,13 +136,20 @@ class KodipayPaybillService {
     if (landlordAmount > 0) {
       const refCode = `KP-LND-${payloadRefId()}`;
       await this.recordPayoutInFirestore(tenant.agencyId, property.ownerId, landlord.name, landlord.email, landlordAmount, landlord.payoutMethod || 'mpesa_b2c', refCode, 'Landlord net disbursal via Golden Paybill');
+      
+      try {
+        await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, MASTER_CREDENTIALS);
+      } catch(err) {
+        console.error('❌ Failed to execute Landlord payout:', err.message);
+      }
     }
 
     // 2. Payout Agency Adjusted Commission
     if (adjustedAgencyCommission > 0) {
       const refCode = `KP-AGC-${payloadRefId()}`;
       const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
-      const agencyPayoutType = agencyConfig.paymentMethods?.mpesaType === 'till' ? 'mpesa_b2b_till' : 'mpesa_b2b';
+      const type = agencyConfig.paymentMethods?.mpesaType;
+      const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
       
       await this.recordPayoutInFirestore(
         tenant.agencyId, 
@@ -144,6 +161,12 @@ class KodipayPaybillService {
         refCode, 
         'Agency commission disbursal (less disbursal fees)'
       );
+      
+      try {
+        await this.executeRealPayout(adjustedAgencyCommission, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
+      } catch(err) {
+        console.error('❌ Failed to execute Agency payout:', err.message);
+      }
     }
   }
 
@@ -160,7 +183,8 @@ class KodipayPaybillService {
     if (forwardAmount > 0) {
       const refCode = `KP-FWD-${payloadRefId()}`;
       const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
-      const agencyPayoutType = agencyConfig.paymentMethods?.mpesaType === 'till' ? 'mpesa_b2b_till' : 'mpesa_b2b';
+      const type = agencyConfig.paymentMethods?.mpesaType;
+      const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
 
       await this.recordPayoutInFirestore(
         tenant.agencyId,
@@ -172,6 +196,34 @@ class KodipayPaybillService {
         refCode,
         '100% automated rent forward (less processing fee)'
       );
+
+      try {
+        await this.executeRealPayout(forwardAmount, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
+      } catch(err) {
+        console.error('❌ Failed to execute Agency forward payout:', err.message);
+      }
+    }
+  }
+
+  async executeRealPayout(amount, method, targetNumber, refCode, credentials) {
+    if (!credentials || !credentials.consumerKey) {
+      console.warn('⚠️ Master API credentials missing, skipping real B2C/B2B execution for', refCode);
+      return;
+    }
+    
+    // Normalize method
+    if (method === 'bank') {
+      console.warn('⚠️ Bank payouts not yet implemented automatically. Skipping', refCode);
+      return;
+    }
+
+    if (method === 'mpesa_b2b' || method === 'mpesa_b2b_paybill' || method === 'paybill') {
+      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'paybill', 'KodiPay Payout', refCode);
+    } else if (method === 'mpesa_b2b_till' || method === 'till') {
+      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'till', 'KodiPay Payout', refCode);
+    } else {
+      // Default B2C
+      await mpesaPayoutService.triggerB2C(credentials, amount, targetNumber, 'KodiPay Rent', refCode);
     }
   }
 
