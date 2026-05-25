@@ -10,11 +10,11 @@ const mpesaPayoutService = require('./mpesaPayoutService');
 
 // Global KodiPay Master Credentials (from env)
 const MASTER_CREDENTIALS = {
-  consumerKey: process.env.MPESA_MASTER_CONSUMER_KEY || '',
-  consumerSecret: process.env.MPESA_MASTER_CONSUMER_SECRET || '',
-  initiatorName: process.env.MPESA_MASTER_INITIATOR || '',
-  securityCredential: process.env.MPESA_MASTER_SECURITY_CREDENTIAL || '',
-  shortCode: process.env.MPESA_MASTER_SHORTCODE || '4005473'
+  consumerKey: process.env.KODIPAY_MASTER_CONSUMER_KEY || '',
+  consumerSecret: process.env.KODIPAY_MASTER_CONSUMER_SECRET || '',
+  initiatorName: process.env.KODIPAY_MASTER_INITIATOR_NAME || '',
+  securityCredential: process.env.KODIPAY_MASTER_SECURITY_CREDENTIAL || '',
+  shortCode: process.env.KODIPAY_MASTER_SHORTCODE || '4005473'
 };
 
 class KodipayPaybillService {
@@ -24,7 +24,7 @@ class KodipayPaybillService {
    */
   async processValidation(payload, agencyId, agencyConfig) {
     console.log(`🔍 [Tier 3] Processing Golden Paybill C2B Validation for agency: ${agencyId}`);
-    
+
     try {
       const prefix = agencyConfig.agencyPrefix || '';
       const tenant = await findTenantForMpesa(agencyId, payload.MSISDN, payload.BillRefNumber, prefix);
@@ -56,7 +56,7 @@ class KodipayPaybillService {
    */
   async processConfirmation(payload, agencyId, agencyConfig) {
     console.log(`✅ [Tier 3] Processing Golden Paybill C2B Confirmation for agency: ${agencyId}`);
-    
+
     try {
       const prefix = agencyConfig.agencyPrefix || '';
       const tenant = await findTenantForMpesa(agencyId, payload.MSISDN, payload.BillRefNumber, prefix);
@@ -136,10 +136,10 @@ class KodipayPaybillService {
     if (landlordAmount > 0) {
       const refCode = `KP-LND-${payloadRefId()}`;
       await this.recordPayoutInFirestore(tenant.agencyId, property.ownerId, landlord.name, landlord.email, landlordAmount, landlord.payoutMethod || 'mpesa_b2c', refCode, 'Landlord net disbursal via Golden Paybill');
-      
+
       try {
         await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, MASTER_CREDENTIALS);
-      } catch(err) {
+      } catch (err) {
         console.error('❌ Failed to execute Landlord payout:', err.message);
       }
     }
@@ -150,21 +150,21 @@ class KodipayPaybillService {
       const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
       const type = agencyConfig.paymentMethods?.mpesaType;
       const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
-      
+
       await this.recordPayoutInFirestore(
-        tenant.agencyId, 
-        'AGENCY_COMMISSION', 
-        agencyConfig.agencyName || 'Agency Commission', 
-        agencyConfig.customerServiceNumber || '', 
-        adjustedAgencyCommission, 
-        agencyPayoutType, 
-        refCode, 
+        tenant.agencyId,
+        'AGENCY_COMMISSION',
+        agencyConfig.agencyName || 'Agency Commission',
+        agencyConfig.customerServiceNumber || '',
+        adjustedAgencyCommission,
+        agencyPayoutType,
+        refCode,
         'Agency commission disbursal (less disbursal fees)'
       );
-      
+
       try {
         await this.executeRealPayout(adjustedAgencyCommission, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
-      } catch(err) {
+      } catch (err) {
         console.error('❌ Failed to execute Agency payout:', err.message);
       }
     }
@@ -175,7 +175,7 @@ class KodipayPaybillService {
    */
   async triggerAutoFullPayoutToAgency(tenant, paymentAmount, agencyConfig) {
     console.log(`💸 [Golden Paybill] Auto-forward 100% to agency: Gross=${paymentAmount}`);
-    
+
     // Deduct single transfer cost
     const transactionCost = 22.30;
     const forwardAmount = Math.max(0, paymentAmount - transactionCost);
@@ -199,7 +199,7 @@ class KodipayPaybillService {
 
       try {
         await this.executeRealPayout(forwardAmount, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
-      } catch(err) {
+      } catch (err) {
         console.error('❌ Failed to execute Agency forward payout:', err.message);
       }
     }
@@ -210,7 +210,7 @@ class KodipayPaybillService {
       console.warn('⚠️ Master API credentials missing, skipping real B2C/B2B execution for', refCode);
       return;
     }
-    
+
     // Normalize method
     if (method === 'bank') {
       console.warn('⚠️ Bank payouts not yet implemented automatically. Skipping', refCode);
