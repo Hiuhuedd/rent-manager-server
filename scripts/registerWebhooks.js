@@ -28,7 +28,7 @@ async function registerUrls() {
     try {
         // 1. Get Access Token
         const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-        const tokenResponse = await axios.get(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+        const tokenResponse = await axios.get(`${baseUrl}/oauth/v2/generate?grant_type=client_credentials`, {
             headers: { Authorization: `Basic ${auth}` }
         });
         const accessToken = tokenResponse.data.access_token;
