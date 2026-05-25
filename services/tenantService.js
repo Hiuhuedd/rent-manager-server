@@ -422,13 +422,23 @@ class TenantService {
     const value = parseFloat(penaltyConfig.value) || 0;
     
     let rentAmount = 0;
-    if (tenant.monthlyPaymentTracking?.breakdown?.rent) {
-      rentAmount = tenant.monthlyPaymentTracking.breakdown.rent;
-    } else {
+    if (tenant.monthlyPaymentTracking?.breakdown?.rent !== undefined) {
+      let rawRent = tenant.monthlyPaymentTracking.breakdown.rent;
+      // If for some legacy reason it's saved as an object in Firestore, try to extract amount
+      if (typeof rawRent === 'object' && rawRent !== null) {
+        rawRent = rawRent.amount || rawRent.value || 0;
+      }
+      rentAmount = parseFloat(rawRent);
+    } 
+    
+    // Fallback if rent is still invalid or 0
+    if (!rentAmount || isNaN(rentAmount)) {
       const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode));
       const unitsSnapshot = await getDocs(unitsQuery);
       if (!unitsSnapshot.empty) {
         rentAmount = parseFloat(unitsSnapshot.docs[0].data().rentAmount) || 0;
+      } else {
+        rentAmount = 0; // Default fallback
       }
     }
 

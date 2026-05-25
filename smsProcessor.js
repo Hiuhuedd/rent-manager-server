@@ -350,7 +350,10 @@ const processRentalPayment = async (paymentData) => {
 
       // Monthly tracking
       monthlyTracking: {
-        expectedTotal,
+        month: paymentMonth,
+        expectedAmount: expectedTotal,
+        expectedTotal: expectedTotal,
+        paidAmount: totalMonthlyPaid,
         totalPaid: totalMonthlyPaid,
         remainingAmount: remainingTotal,
         status: monthlyStatus,
