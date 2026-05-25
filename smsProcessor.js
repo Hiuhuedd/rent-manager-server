@@ -112,7 +112,8 @@ const processRentalPayment = async (paymentData) => {
       accountNumberNormalized,
       paymentMonth,
       date,
-      senderName
+      senderName,
+      paymentMethod
     } = paymentData;
 
     const timestamp = new Date().toISOString();
