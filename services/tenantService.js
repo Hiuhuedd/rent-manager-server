@@ -490,21 +490,25 @@ class TenantService {
       const methods = settings.paymentMethods || {};
       const activeMethods = [];
 
-      if (methods.mpesaActive) {
-          const channelType = methods.mpesaType === 'till' ? 'Till' : 'Paybill';
-          activeMethods.push(`M-Pesa ${channelType} ${methods.mpesaNumber || settings.paybill || '522533'}`);
-      }
-      if (methods.bankActive) {
-          activeMethods.push(`${methods.bankName || 'Bank'} A/C ${methods.bankAccountNumber || ''}`);
-      }
-      if (methods.cashActive && activeMethods.length === 0) {
-          activeMethods.push('Cash remittance');
-      }
-
-      if (activeMethods.length > 0) {
-          paybillString = activeMethods.join(' or ');
+      if (parseInt(settings.mpesaIntegrationTier) === 3) {
+          paybillString = `M-Pesa Paybill 4005473`;
       } else {
-          paybillString = `Paybill ${settings.paybill || '522533'}`;
+          if (methods.mpesaActive) {
+              const channelType = methods.mpesaType === 'till' ? 'Till' : 'Paybill';
+              activeMethods.push(`M-Pesa ${channelType} ${methods.mpesaNumber || settings.paybill || '522533'}`);
+          }
+          if (methods.bankActive) {
+              activeMethods.push(`${methods.bankName || 'Bank'} A/C ${methods.bankAccountNumber || ''}`);
+          }
+          if (methods.cashActive && activeMethods.length === 0) {
+              activeMethods.push('Cash remittance');
+          }
+
+          if (activeMethods.length > 0) {
+              paybillString = activeMethods.join(' or ');
+          } else {
+              paybillString = `Paybill ${settings.paybill || '522533'}`;
+          }
       }
 
       const formatPhoneAsAccount = (phone) => {

@@ -10,7 +10,7 @@ async function registerUrls() {
     // Pull settings from .env
     const isProd = process.env.KODIPAY_MASTER_ENV === 'production';
     const baseUrl = isProd ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
-    
+
     const consumerKey = process.env.KODIPAY_MASTER_CONSUMER_KEY;
     const consumerSecret = process.env.KODIPAY_MASTER_CONSUMER_SECRET;
     const shortCode = process.env.KODIPAY_MASTER_SHORTCODE;
@@ -36,7 +36,7 @@ async function registerUrls() {
 
         // 2. Register URLs
         console.log(`\n🔗 Registering Webhook Listener Endpoints...`);
-        
+
         const payload = {
             ShortCode: shortCode,
             ResponseType: 'Completed', // 'Completed' means if KodiPay server times out, Daraja completes the transaction anyway
@@ -44,7 +44,7 @@ async function registerUrls() {
             ValidationURL: 'https://rent-manager-server.onrender.com/api/webhook/gateway/validation'
         };
 
-        const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v1/registerurl`, payload, {
+        const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v2/registerurl`, payload, {
             headers: { Authorization: `Bearer ${accessToken}` }
         });
 
