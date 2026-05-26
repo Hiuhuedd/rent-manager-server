@@ -86,11 +86,11 @@ class MpesaPayoutService {
 
       if (type === 'till') {
         // CHANGED: 'BusinessMerchantToMerchantTransfer' pulls from Utility. 'BusinessBuyGoods' pulls from MMF.
-        commandId = 'BusinessMerchantToMerchantTransfer';
+        commandId = 'BusinessPayToBulkTransfer';
         recieverIdentifierType = '2'; // Till Number (Buy Goods)
       } else if (type === 'paybill') {
         // CHANGED: 'BusinessPayToBulkTransfer' pulls from Utility. 'BusinessPayBill' pulls from MMF.
-        commandId = 'BusinessPayToBulkTransfer';
+        commandId = 'DisburseFundsToBusiness';
         recieverIdentifierType = '4'; // Organization shortcode
       }
 
