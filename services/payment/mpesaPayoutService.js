@@ -39,7 +39,7 @@ class MpesaPayoutService {
   }
 
   async triggerB2C(credentials, amount, phone, remarks, receiptRef) {
-    console.log(`💸 Initiating B2C Payout of KSh ${amount} to ${phone}`);
+    console.log(`💸 Initiating Utility-sourced B2C Payout of KSh ${amount} to ${phone}`);
     try {
       const token = await this.getAccessToken(credentials.consumerKey, credentials.consumerSecret);
       const url = `${DARAJA_BASE_URL}/mpesa/b2c/v1/paymentrequest`;
@@ -51,7 +51,8 @@ class MpesaPayoutService {
       const payload = {
         InitiatorName: credentials.initiatorName,
         SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
-        CommandID: 'BusinessPayment',
+        // CHANGED: 'SalaryPayment' pulls from Utility. 'BusinessPayment' pulls from MMF.
+        CommandID: 'SalaryPayment',
         Amount: Math.round(amount),
         PartyA: credentials.shortCode,
         PartyB: this.formatPhone(phone),
@@ -71,7 +72,7 @@ class MpesaPayoutService {
   }
 
   async triggerB2B(credentials, amount, receiverShortCode, type, remarks, accountRef) {
-    console.log(`💸 Initiating B2B Payout of KSh ${amount} to ${receiverShortCode} (${type})`);
+    console.log(`💸 Initiating Utility-sourced B2B Payout of KSh ${amount} to ${receiverShortCode} (${type})`);
     try {
       const token = await this.getAccessToken(credentials.consumerKey, credentials.consumerSecret);
       const url = `${DARAJA_BASE_URL}/mpesa/b2b/v1/paymentrequest`;
@@ -82,11 +83,14 @@ class MpesaPayoutService {
 
       let commandId = 'BusinessToBusinessTransfer';
       let recieverIdentifierType = '4'; // Default: Organization/Paybill
+
       if (type === 'till') {
-        commandId = 'BusinessBuyGoods';
+        // CHANGED: 'BusinessMerchantToMerchantTransfer' pulls from Utility. 'BusinessBuyGoods' pulls from MMF.
+        commandId = 'BusinessMerchantToMerchantTransfer';
         recieverIdentifierType = '2'; // Till Number (Buy Goods)
       } else if (type === 'paybill') {
-        commandId = 'BusinessPayBill';
+        // CHANGED: 'BusinessPayToBulkTransfer' pulls from Utility. 'BusinessPayBill' pulls from MMF.
+        commandId = 'BusinessPayToBulkTransfer';
         recieverIdentifierType = '4'; // Organization shortcode
       }
 
@@ -96,7 +100,7 @@ class MpesaPayoutService {
         Initiator: credentials.initiatorName,
         SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
         CommandID: commandId,
-        SenderIdentifierType: '4',       // Sender is always Paybill (Organization)
+        SenderIdentifierType: '4',       // Sender remains shortcode
         RecieverIdentifierType: recieverIdentifierType,
         Amount: Math.round(amount),
         PartyA: credentials.shortCode,
@@ -115,6 +119,7 @@ class MpesaPayoutService {
       throw error;
     }
   }
+
 }
 
 module.exports = new MpesaPayoutService();
