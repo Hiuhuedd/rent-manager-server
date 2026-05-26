@@ -121,52 +121,69 @@ class KodipayPaybillService {
     if (!landlordSnap.exists()) return;
     const landlord = landlordSnap.data();
 
-    const commissionRate = landlord.commissionRate !== undefined ? parseFloat(landlord.commissionRate) : 8;
-    const agencyCommission = paymentAmount * (commissionRate / 100);
-    const landlordAmount = paymentAmount - agencyCommission;
+    const commissionRate = landlord.commissionRate !== undefined ? parseFloat(landlord.commissionRate) : 10;
+    const agencyCommission = parseFloat((paymentAmount * (commissionRate / 100)).toFixed(2));
+    const landlordAmount = parseFloat((paymentAmount - agencyCommission).toFixed(2));
 
-    console.log(`💸 [Golden Paybill] Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission}, Landlord Net=${landlordAmount}`);
+    console.log(`💸 [Golden Paybill] Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission} (${commissionRate}%), Landlord Net=${landlordAmount}`);
 
-    // Deduct transaction costs from Agency Commission
-    // Assuming flat B2C transfer fee of KSh 22.30 per payout
-    const transactionCost = 22.30;
-    const adjustedAgencyCommission = Math.max(0, agencyCommission - (transactionCost * 2)); // 2 transactions: one to landlord, one to agency
+    // NOTE: Safaricom B2B/B2C fees are deducted from the sender's (KodiPay paybill) float
+    // automatically by Safaricom. Do NOT subtract them from payout amounts in code.
 
     // 1. Payout Landlord Net
     if (landlordAmount > 0) {
       const refCode = `KP-LND-${payloadRefId()}`;
-      await this.recordPayoutInFirestore(tenant.agencyId, property.ownerId, landlord.name, landlord.email, landlordAmount, landlord.payoutMethod || 'mpesa_b2c', refCode, 'Landlord net disbursal via Golden Paybill');
+      await this.recordPayoutInFirestore(
+        tenant.agencyId,
+        property.ownerId,
+        landlord.name,
+        landlord.email,
+        landlordAmount,
+        landlord.payoutMethod || 'mpesa_b2c',
+        refCode,
+        'Landlord net disbursal via Golden Paybill'
+      );
 
       try {
         await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, MASTER_CREDENTIALS);
+        console.log(`✅ [Golden Paybill] Landlord payout of KSh ${landlordAmount} triggered. Ref: ${refCode}`);
       } catch (err) {
         console.error('❌ Failed to execute Landlord payout:', err.message);
       }
     }
 
-    // 2. Payout Agency Adjusted Commission
-    if (adjustedAgencyCommission > 0) {
+    // 2. Payout Agency Commission
+    // Commission is paid out directly — no in-code fee deduction
+    if (agencyCommission > 0) {
       const refCode = `KP-AGC-${payloadRefId()}`;
       const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
       const type = agencyConfig.paymentMethods?.mpesaType;
       const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
+
+      if (!agencyPayoutNumber) {
+        console.warn(`⚠️ [Golden Paybill] Agency commission of KSh ${agencyCommission} NOT disbursed — no payout number configured for agency ${agencyConfig.agencyName}`);
+        return;
+      }
 
       await this.recordPayoutInFirestore(
         tenant.agencyId,
         'AGENCY_COMMISSION',
         agencyConfig.agencyName || 'Agency Commission',
         agencyConfig.customerServiceNumber || '',
-        adjustedAgencyCommission,
+        agencyCommission,
         agencyPayoutType,
         refCode,
-        'Agency commission disbursal (less disbursal fees)'
+        `Agency commission disbursal — ${commissionRate}% of KSh ${paymentAmount}`
       );
 
       try {
-        await this.executeRealPayout(adjustedAgencyCommission, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
+        await this.executeRealPayout(agencyCommission, agencyPayoutType, agencyPayoutNumber, refCode, MASTER_CREDENTIALS);
+        console.log(`✅ [Golden Paybill] Agency commission of KSh ${agencyCommission} triggered via ${agencyPayoutType}. Ref: ${refCode}`);
       } catch (err) {
-        console.error('❌ Failed to execute Agency payout:', err.message);
+        console.error('❌ Failed to execute Agency commission payout:', err.message);
       }
+    } else {
+      console.warn(`⚠️ [Golden Paybill] Agency commission is KSh 0 — skipping commission payout.`);
     }
   }
 
@@ -177,7 +194,7 @@ class KodipayPaybillService {
     console.log(`💸 [Golden Paybill] Auto-forward 100% to agency: Gross=${paymentAmount}`);
 
     // Deduct single transfer cost
-    const transactionCost = 22.30;
+    const transactionCost = 7;
     const forwardAmount = Math.max(0, paymentAmount - transactionCost);
 
     if (forwardAmount > 0) {
