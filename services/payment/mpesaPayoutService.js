@@ -85,11 +85,9 @@ class MpesaPayoutService {
       let recieverIdentifierType = '4'; // Default: Organization/Paybill
 
       if (type === 'till') {
-        // CHANGED: 'BusinessMerchantToMerchantTransfer' pulls from Utility. 'BusinessBuyGoods' pulls from MMF.
-        commandId = 'BusinessPayToBulkTransfer';
+        commandId = 'BusinessPayment';
         recieverIdentifierType = '2'; // Till Number (Buy Goods)
       } else if (type === 'paybill') {
-        // CHANGED: 'BusinessPayToBulkTransfer' pulls from Utility. 'BusinessPayBill' pulls from MMF.
         commandId = 'DisburseFundsToBusiness';
         recieverIdentifierType = '4'; // Organization shortcode
       }
