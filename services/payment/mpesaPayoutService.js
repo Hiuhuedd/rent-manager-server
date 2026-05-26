@@ -39,7 +39,7 @@ class MpesaPayoutService {
   }
 
   async triggerB2C(credentials, amount, phone, remarks, receiptRef) {
-    console.log(`💸 Initiating Utility-sourced B2C Payout of KSh ${amount} to ${phone}`);
+    console.log(`💸 Initiating B2C Payout of KSh ${amount} to ${phone}`);
     try {
       const token = await this.getAccessToken(credentials.consumerKey, credentials.consumerSecret);
       const url = `${DARAJA_BASE_URL}/mpesa/b2c/v1/paymentrequest`;
@@ -51,8 +51,7 @@ class MpesaPayoutService {
       const payload = {
         InitiatorName: credentials.initiatorName,
         SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
-        // CHANGED: 'SalaryPayment' pulls from Utility. 'BusinessPayment' pulls from MMF.
-        CommandID: 'SalaryPayment',
+        CommandID: 'BusinessPayment',
         Amount: Math.round(amount),
         PartyA: credentials.shortCode,
         PartyB: this.formatPhone(phone),
@@ -72,7 +71,7 @@ class MpesaPayoutService {
   }
 
   async triggerB2B(credentials, amount, receiverShortCode, type, remarks, accountRef) {
-    console.log(`💸 Initiating Utility-sourced B2B Payout of KSh ${amount} to ${receiverShortCode} (${type})`);
+    console.log(`💸 Initiating B2B Payout of KSh ${amount} to ${receiverShortCode} (${type})`);
     try {
       const token = await this.getAccessToken(credentials.consumerKey, credentials.consumerSecret);
       const url = `${DARAJA_BASE_URL}/mpesa/b2b/v1/paymentrequest`;
@@ -83,12 +82,11 @@ class MpesaPayoutService {
 
       let commandId = 'BusinessToBusinessTransfer';
       let recieverIdentifierType = '4'; // Default: Organization/Paybill
-
       if (type === 'till') {
-        commandId = 'BusinessPayment';
+        commandId = 'BusinessBuyGoods';
         recieverIdentifierType = '2'; // Till Number (Buy Goods)
       } else if (type === 'paybill') {
-        commandId = 'DisburseFundsToBusiness';
+        commandId = 'BusinessPayBill';
         recieverIdentifierType = '4'; // Organization shortcode
       }
 
@@ -98,7 +96,7 @@ class MpesaPayoutService {
         Initiator: credentials.initiatorName,
         SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
         CommandID: commandId,
-        SenderIdentifierType: '4',       // Sender remains shortcode
+        SenderIdentifierType: '4',       // Sender is always Paybill (Organization)
         RecieverIdentifierType: recieverIdentifierType,
         Amount: Math.round(amount),
         PartyA: credentials.shortCode,
@@ -117,7 +115,6 @@ class MpesaPayoutService {
       throw error;
     }
   }
-
 }
 
 module.exports = new MpesaPayoutService();
