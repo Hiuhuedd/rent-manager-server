@@ -94,7 +94,8 @@ async function checkoutPage(req, res) {
     }
 
     const amountDue = tenant.arrears || 0;
-    const breakdown = { rent, deposit, garbage, water, electricity, penalties };
+    const paidAmount = tracking.paidAmount || 0;
+    const breakdown = { rent, deposit, garbage, water, electricity, penalties, paidAmount };
     const agencyName = settings.agencyName || 'KodiPay';
     const tenantPhone = tenant.phone || '';
     const displayPhone = tenantPhone.trim().startsWith('0')
@@ -278,11 +279,18 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
   .amount-input::-webkit-outer-spin-button, .amount-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .amount-sub{font-size:13px;color:#475569;margin-top:4px;font-weight:500}
 
-  .breakdown{background:#1e1e2a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px;margin-bottom:24px}
+  .breakdown{background:#1e1e2a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px;margin-bottom:24px;display:none}
+  .breakdown.open{display:block}
+  .breakdown-toggle{display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:600;color:#00d4aa;cursor:pointer;margin-bottom:24px;background:rgba(0,212,170,.1);padding:10px;border-radius:12px;transition:background .2s}
+  .breakdown-toggle:hover{background:rgba(0,212,170,.15)}
+  .breakdown-toggle svg{transition:transform .2s}
+  .breakdown-toggle.open svg{transform:rotate(180deg)}
+  
   .breakdown-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px;color:#94a3b8}
   .breakdown-row:last-child{margin-bottom:0}
   .breakdown-row span:last-child{font-weight:600;color:#e2e8f0}
   .breakdown-row.total{border-top:1px dashed rgba(255,255,255,.1);padding-top:8px;margin-top:4px;color:#fff}
+  .breakdown-row.paid span:last-child{color:#00d4aa}
   .breakdown-row.arrears span:last-child{color:#ef4444}
 
   .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
@@ -343,10 +351,14 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
           <span class="amount-currency">KSh</span>
           <input id="pay-amount" class="amount-input" type="number" inputmode="decimal" value="${amountDue}" min="1" step="1"/>
         </div>
-        <div class="amount-sub">You can adjust the amount to make a partial payment.</div>
       </div>
 
-      <div class="breakdown">
+      <div class="breakdown-toggle" onclick="toggleBreakdown()" id="toggle-btn">
+        <span>View Breakdown</span>
+        <svg id="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+
+      <div class="breakdown" id="breakdown-content">
         ${breakdown.rent > 0 ? `<div class="breakdown-row"><span>Rent</span><span>KSh ${breakdown.rent.toLocaleString('en-KE')}</span></div>` : ''}
         ${breakdown.deposit > 0 ? `<div class="breakdown-row"><span>Deposit</span><span>KSh ${breakdown.deposit.toLocaleString('en-KE')}</span></div>` : ''}
         ${breakdown.garbage > 0 ? `<div class="breakdown-row"><span>Garbage</span><span>KSh ${breakdown.garbage.toLocaleString('en-KE')}</span></div>` : ''}
@@ -354,6 +366,7 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
         ${breakdown.electricity > 0 ? `<div class="breakdown-row"><span>Electricity</span><span>KSh ${breakdown.electricity.toLocaleString('en-KE')}</span></div>` : ''}
         ${breakdown.penalties > 0 ? `<div class="breakdown-row"><span>Late Penalty</span><span>KSh ${breakdown.penalties.toLocaleString('en-KE')}</span></div>` : ''}
         <div class="breakdown-row total"><span>Total Monthly Expected</span><span>KSh ${(breakdown.rent + breakdown.deposit + breakdown.garbage + breakdown.water + breakdown.electricity + breakdown.penalties).toLocaleString('en-KE')}</span></div>
+        <div class="breakdown-row paid"><span>Amount Paid</span><span>KSh ${breakdown.paidAmount.toLocaleString('en-KE')}</span></div>
         <div class="breakdown-row arrears"><span>System Arrears (Due)</span><span>KSh ${Number(amountDue).toLocaleString('en-KE')}</span></div>
       </div>
 
@@ -412,6 +425,19 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
   const BACKEND    = '${backendUrl}';
   let checkoutId   = null;
   let pollTimer    = null;
+
+  function toggleBreakdown() {
+    const content = document.getElementById('breakdown-content');
+    const toggleBtn = document.getElementById('toggle-btn');
+    const isOpen = content.classList.contains('open');
+    if (isOpen) {
+      content.classList.remove('open');
+      toggleBtn.classList.remove('open');
+    } else {
+      content.classList.add('open');
+      toggleBtn.classList.add('open');
+    }
+  }
 
   function showState(id) {
     ['state-default','state-loading','state-success','state-error'].forEach(s => {
