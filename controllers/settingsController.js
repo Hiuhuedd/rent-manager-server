@@ -130,6 +130,31 @@ class SettingsController {
             res.status(500).json(createErrorResponse(500, `Safaricom API Error: ${errMsg}`, safaricomErr));
         }
     }
+
+    async syncMpesaBalances(req, res) {
+        try {
+            const { agencyId } = req.user;
+            
+            const settings = await settingsService.getSettings(agencyId);
+            const creds = settings.mpesaCredentials;
+
+            if (!creds || !creds.consumerKey || !creds.consumerSecret || !creds.shortCode) {
+                return res.status(400).json(createErrorResponse('Missing required M-Pesa credentials. Cannot query balances.'));
+            }
+
+            const mpesaPayoutService = require('../services/payment/mpesaPayoutService');
+            
+            // This triggers the query asynchronously. Safaricom will reply to our webhook later.
+            await mpesaPayoutService.queryAccountBalance(creds, agencyId);
+            
+            res.json(createSuccessResponse({}, 'Account balance query submitted to Safaricom successfully. Balances will update shortly.'));
+        } catch (error) {
+            console.error('[SettingsController] Failed to query account balances:', error.response?.data || error.message);
+            const safaricomErr = error.response?.data;
+            const errMsg = safaricomErr?.errorMessage || safaricomErr?.errorDescription || error.message;
+            res.status(500).json(createErrorResponse(500, `Safaricom API Error: ${errMsg}`, safaricomErr));
+        }
+    }
 }
 
 module.exports = new SettingsController();

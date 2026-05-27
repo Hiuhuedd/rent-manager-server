@@ -115,6 +115,36 @@ class MpesaPayoutService {
       throw error;
     }
   }
+
+  async queryAccountBalance(credentials, agencyId) {
+    console.log(`📊 Initiating Account Balance Query for ${credentials.shortCode}`);
+    try {
+      const token = await this.getAccessToken(credentials.consumerKey, credentials.consumerSecret);
+      const url = `${DARAJA_BASE_URL}/mpesa/accountbalance/v1/query`;
+      const auth = `Bearer ${token}`;
+
+      let baseUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://rent-manager-server.onrender.com';
+      if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+
+      const payload = {
+        Initiator: credentials.initiatorName,
+        SecurityCredential: this.getSecurityCredential(credentials.securityCredential),
+        CommandID: 'AccountBalance',
+        PartyA: credentials.shortCode,
+        IdentifierType: '4', // Organization
+        Remarks: 'Balance Query',
+        QueueTimeOutURL: `${baseUrl}/api/webhook/gateway/balance-timeout/${agencyId}`,
+        ResultURL: `${baseUrl}/api/webhook/gateway/balance-result/${agencyId}`
+      };
+
+      const response = await axios.post(url, payload, { headers: { Authorization: auth } });
+      console.log('✅ Account Balance Query Response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Account Balance Query failed:', error.response ? error.response.data : error.message);
+      throw error;
+    }
+  }
 }
 
 module.exports = new MpesaPayoutService();

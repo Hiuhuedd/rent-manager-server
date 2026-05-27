@@ -13,4 +13,7 @@ router.post('/gateway/confirmation', asyncHandler(webhookController.processDaraj
 router.post('/gateway/result', asyncHandler(webhookController.processDarajaResult));
 router.post('/gateway/timeout', asyncHandler(webhookController.processDarajaTimeout));
 
+router.post('/gateway/balance-result/:agencyId', asyncHandler(webhookController.processDarajaBalanceResult));
+router.post('/gateway/balance-timeout/:agencyId', asyncHandler(webhookController.processDarajaBalanceTimeout));
+
 module.exports = router;

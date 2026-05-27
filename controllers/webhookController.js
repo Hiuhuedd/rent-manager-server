@@ -115,6 +115,71 @@ class WebhookController {
 
     return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
   }
+
+  async processDarajaBalanceResult(req, res) {
+    const { agencyId } = req.params;
+    console.log(`\n📩 === DARAJA ACCOUNT BALANCE RESULT [Agency: ${agencyId}] ===`);
+    const payload = req.body;
+    console.log(JSON.stringify(payload, null, 2));
+
+    try {
+      const result = payload?.Result;
+      const resultCode = result?.ResultCode;
+      
+      if (resultCode === 0 && result.ResultParameters && result.ResultParameters.ResultParameter) {
+        const params = result.ResultParameters.ResultParameter;
+        const balanceParam = params.find(p => p.Key === 'AccountBalance');
+        
+        if (balanceParam && balanceParam.Value) {
+          const balanceString = balanceParam.Value;
+          // Example: Working Account|KES|125.00|125.00|0.00|0.00&Utility Account|KES|219.00|219.00|0.00|0.00
+          const accounts = balanceString.split('&');
+          let workingBalance = 0;
+          let utilityBalance = 0;
+          
+          accounts.forEach(acc => {
+            const parts = acc.split('|');
+            if (parts.length >= 3) {
+              const accountName = parts[0];
+              const currentBalance = parseFloat(parts[2]);
+              
+              if (accountName.includes('Working Account')) {
+                workingBalance = currentBalance;
+              } else if (accountName.includes('Utility Account')) {
+                utilityBalance = currentBalance;
+              }
+            }
+          });
+          
+          console.log(`✅ [Balance Query] Successfully parsed balances for Agency ${agencyId}: Utility=${utilityBalance}, Working=${workingBalance}`);
+          
+          // Save to Firestore!
+          const { db } = require('../config/firebase');
+          const { doc, updateDoc } = require('firebase/firestore');
+          const settingsRef = doc(db, 'settings', agencyId);
+          await updateDoc(settingsRef, {
+            'liveMpesaBalances.utility': utilityBalance,
+            'liveMpesaBalances.working': workingBalance,
+            'liveMpesaBalances.lastSynced': new Date().toISOString()
+          });
+        }
+      } else {
+        console.warn(`⚠️ [Balance Query] FAILED or missing parameters - Code: ${resultCode}`);
+      }
+
+      // Acknowledge Safaricom
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+    } catch (err) {
+      console.error('❌ Account Balance Result callback crash:', err.message);
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+    }
+  }
+
+  async processDarajaBalanceTimeout(req, res) {
+    const { agencyId } = req.params;
+    console.log(`\n⏰ === DARAJA ACCOUNT BALANCE TIMEOUT [Agency: ${agencyId}] ===`);
+    return res.status(200).json({ ResultCode: 0, ResultDesc: 'Received' });
+  }
 }
 
 module.exports = new WebhookController();

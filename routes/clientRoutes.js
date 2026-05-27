@@ -89,15 +89,23 @@ router.get('/', asyncHandler(async (req, res) => {
   const settingsService = require('../services/settingsService');
   const settings = await settingsService.getSettings(agencyId);
   if (settings && settings.integrationTier === 'tier2') {
-    const globalCollected = finRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
-    const globalPaidOut = payoutsList.reduce((sum, p) => sum + (p.amount || 0), 0);
-    
-    const globalCommission = enrichedClients.reduce((sum, c) => sum + c.totalCommission, 0);
-    
-    // Utility Account (receives all gross payments)
-    mpesaBalances.utility = Math.max(0, globalCollected - globalPaidOut - globalCommission);
-    // Working Account (funds available for disbursement/commission retention)
-    mpesaBalances.working = Math.max(0, globalCommission);
+    if (settings.liveMpesaBalances) {
+      // Use real Safaricom API balances if synced
+      mpesaBalances.utility = settings.liveMpesaBalances.utility || 0;
+      mpesaBalances.working = settings.liveMpesaBalances.working || 0;
+      mpesaBalances.lastSynced = settings.liveMpesaBalances.lastSynced || null;
+      mpesaBalances.isLive = true;
+    } else {
+      // Fallback to locally computed simulated ledger
+      const globalCollected = finRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+      const globalPaidOut = payoutsList.reduce((sum, p) => sum + (p.amount || 0), 0);
+      
+      const globalCommission = enrichedClients.reduce((sum, c) => sum + c.totalCommission, 0);
+      
+      mpesaBalances.utility = Math.max(0, globalCollected - globalPaidOut - globalCommission);
+      mpesaBalances.working = Math.max(0, globalCommission);
+      mpesaBalances.isLive = false;
+    }
   }
 
   res.json({ success: true, data: enrichedClients, mpesaBalances });

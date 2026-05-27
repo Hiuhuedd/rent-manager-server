@@ -19,4 +19,7 @@ router.put('/', asyncHandler(settingsController.updateSettings.bind(settingsCont
 // POST /api/settings/register-mpesa - Register custom Daraja Webhooks dynamically
 router.post('/register-mpesa', asyncHandler(settingsController.registerMpesaWebhooks.bind(settingsController)));
 
+// POST /api/settings/sync-mpesa-balances - Query Safaricom Account Balance API
+router.post('/sync-mpesa-balances', asyncHandler(settingsController.syncMpesaBalances.bind(settingsController)));
+
 module.exports = router;
