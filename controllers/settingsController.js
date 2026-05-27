@@ -81,6 +81,53 @@ class SettingsController {
             res.status(500).json(createErrorResponse('Failed to update settings', error.message));
         }
     }
+
+    async registerMpesaWebhooks(req, res) {
+        try {
+            const { agencyId } = req.user;
+            const axios = require('axios');
+            
+            // 1. Fetch current settings for credentials
+            const settings = await settingsService.getSettings(agencyId);
+            const creds = settings.mpesaCredentials;
+
+            if (!creds || !creds.consumerKey || !creds.consumerSecret || !creds.shortCode) {
+                return res.status(400).json(createErrorResponse('Missing required M-Pesa credentials. Please configure Consumer Key, Consumer Secret, and Short Code first.'));
+            }
+
+            const isProd = process.env.NODE_ENV === 'production' || process.env.KODIPAY_MASTER_ENV === 'production';
+            const baseUrl = isProd ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
+
+            // 2. Generate Access Token using custom agency credentials
+            const auth = Buffer.from(`${creds.consumerKey.trim()}:${creds.consumerSecret.trim()}`).toString('base64');
+            const tokenResponse = await axios.get(`${baseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+                headers: { Authorization: `Basic ${auth}` }
+            });
+            const accessToken = tokenResponse.data.access_token;
+
+            // 3. Register C2B URLs on Daraja
+            const host = req.get('host');
+            const scheme = req.protocol;
+            const callbackBase = `${scheme}://${host}`;
+
+            const payload = {
+                ShortCode: creds.shortCode.trim(),
+                ResponseType: 'Completed',
+                ConfirmationURL: `${callbackBase}/api/webhook/gateway/confirmation`,
+                ValidationURL: `${callbackBase}/api/webhook/gateway/validation`
+            };
+
+            console.log(`🔗 Dynamic Register URL for agency ${agencyId} (${creds.shortCode}) to ${callbackBase}`);
+            const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v2/registerurl`, payload, {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+
+            res.json(createSuccessResponse(registerResponse.data, 'Daraja C2B webhooks registered successfully!'));
+        } catch (error) {
+            console.error('[SettingsController] Failed to register webhooks:', error.response?.data || error.message);
+            res.status(500).json(createErrorResponse('Failed to register webhooks with Safaricom Daraja API', error.response?.data || error.message));
+        }
+    }
 }
 
 module.exports = new SettingsController();

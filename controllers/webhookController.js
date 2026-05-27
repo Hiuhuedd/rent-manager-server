@@ -1,7 +1,6 @@
 const settingsService = require('../services/settingsService');
 const manualPaymentService = require('../services/payment/manualPaymentService');
 const dedicatedMpesaService = require('../services/payment/dedicatedMpesaService');
-const kodipayPaybillService = require('../services/payment/kodipayPaybillService');
 const axios = require('axios');
 
 class WebhookController {
@@ -82,33 +81,15 @@ class WebhookController {
 
     try {
       const shortCode = payload.BusinessShortCode;
-      const isGoldenPaybill = shortCode === '4005473' || shortCode === process.env.KODIPAY_MASTER_SHORTCODE;
-
-      let agencyId = null;
-      let agencyConfig = null;
-
-      if (isGoldenPaybill) {
-        agencyId = await settingsService.findAgencyByTenantPhone(payload.BillRefNumber);
-        if (!agencyId) {
-          console.warn('❌ Golden Paybill Validation failed: unregistered tenant phone used as account number', payload.BillRefNumber);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account number" });
-        }
-      } else {
-        agencyId = await settingsService.findAgencyByShortCode(shortCode);
-        if (!agencyId) {
-          console.warn('❌ Dedicated M-Pesa Validation failed: shortcode not registered', shortCode);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Business Short Code not registered" });
-        }
+      
+      let agencyId = await settingsService.findAgencyByShortCode(shortCode);
+      if (!agencyId) {
+        console.warn('❌ Dedicated M-Pesa Validation failed: shortcode not registered', shortCode);
+        return res.status(200).json({ ResultCode: 1, ResultDesc: "Business Short Code not registered" });
       }
 
-      agencyConfig = await settingsService.getSettings(agencyId);
-
-      let validationResult;
-      if (isGoldenPaybill) {
-        validationResult = await kodipayPaybillService.processValidation(payload, agencyId, agencyConfig);
-      } else {
-        validationResult = await dedicatedMpesaService.processValidation(payload, agencyId, agencyConfig);
-      }
+      const agencyConfig = await settingsService.getSettings(agencyId);
+      const validationResult = await dedicatedMpesaService.processValidation(payload, agencyId, agencyConfig);
 
       return res.status(200).json(validationResult);
 
@@ -126,33 +107,15 @@ class WebhookController {
 
     try {
       const shortCode = payload.BusinessShortCode;
-      const isGoldenPaybill = shortCode === '4005473' || shortCode === process.env.KODIPAY_MASTER_SHORTCODE;
 
-      let agencyId = null;
-      let agencyConfig = null;
-
-      if (isGoldenPaybill) {
-        agencyId = await settingsService.findAgencyByTenantPhone(payload.BillRefNumber);
-        if (!agencyId) {
-          console.error('❌ Golden Paybill Confirmation failed: unregistered tenant phone used as account number', payload.BillRefNumber);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Invalid account number" });
-        }
-      } else {
-        agencyId = await settingsService.findAgencyByShortCode(shortCode);
-        if (!agencyId) {
-          console.error('❌ Dedicated M-Pesa Confirmation failed: shortcode not registered', shortCode);
-          return res.status(200).json({ ResultCode: 1, ResultDesc: "Business Short Code not registered" });
-        }
+      let agencyId = await settingsService.findAgencyByShortCode(shortCode);
+      if (!agencyId) {
+        console.error('❌ Dedicated M-Pesa Confirmation failed: shortcode not registered', shortCode);
+        return res.status(200).json({ ResultCode: 1, ResultDesc: "Business Short Code not registered" });
       }
 
-      agencyConfig = await settingsService.getSettings(agencyId);
-
-      let confirmationResult;
-      if (isGoldenPaybill) {
-        confirmationResult = await kodipayPaybillService.processConfirmation(payload, agencyId, agencyConfig);
-      } else {
-        confirmationResult = await dedicatedMpesaService.processConfirmation(payload, agencyId, agencyConfig);
-      }
+      const agencyConfig = await settingsService.getSettings(agencyId);
+      const confirmationResult = await dedicatedMpesaService.processConfirmation(payload, agencyId, agencyConfig);
 
       if (!confirmationResult.success) {
         return res.status(200).json({ ResultCode: 1, ResultDesc: confirmationResult.error || "Confirmation processing failed" });

@@ -16,4 +16,7 @@ router.get('/', asyncHandler(settingsController.getSettings.bind(settingsControl
 // PUT /api/settings - Update application settings
 router.put('/', asyncHandler(settingsController.updateSettings.bind(settingsController)));
 
+// POST /api/settings/register-mpesa - Register custom Daraja Webhooks dynamically
+router.post('/register-mpesa', asyncHandler(settingsController.registerMpesaWebhooks.bind(settingsController)));
+
 module.exports = router;
