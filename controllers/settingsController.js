@@ -131,7 +131,20 @@ class SettingsController {
         }
     }
 
-    async syncMpesaBalances(req, res) {
+    async getMpesaBalances(req, res) {
+        try {
+            const { agencyId } = req.user;
+            const settings = await settingsService.getSettings(agencyId);
+            if (settings && settings.liveMpesaBalances) {
+                return res.json(createSuccessResponse(settings.liveMpesaBalances, 'Live M-Pesa balances fetched'));
+            }
+            return res.json(createSuccessResponse({ utility: 0, working: 0, isLive: false }, 'No live balances yet'));
+        } catch (error) {
+            console.error('[SettingsController] Failed to get mpesa balances:', error.message);
+            res.status(500).json(createErrorResponse(500, 'Failed to fetch balances'));
+        }
+    }
+
         try {
             const { agencyId } = req.user;
             

@@ -20,6 +20,7 @@ router.put('/', asyncHandler(settingsController.updateSettings.bind(settingsCont
 router.post('/register-mpesa', asyncHandler(settingsController.registerMpesaWebhooks.bind(settingsController)));
 
 // POST /api/settings/sync-mpesa-balances - Query Safaricom Account Balance API
-router.post('/sync-mpesa-balances', asyncHandler(settingsController.syncMpesaBalances.bind(settingsController)));
+// GET /api/settings/mpesa-balances - Retrieve live M-Pesa balances
+router.get('/mpesa-balances', asyncHandler(settingsController.getMpesaBalances.bind(settingsController)));
 
 module.exports = router;
