@@ -67,7 +67,6 @@ router.get('/', asyncHandler(async (req, res) => {
     const clientPayouts = payoutsList.filter(p => p.clientId === client.id);
     const totalPaid = clientPayouts.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-    // Net payout due = Collected - Commission - Expenses
     const netPayoutDue = totalCollected - totalCommission - totalExpenses;
     const outstanding = Math.max(0, netPayoutDue - totalPaid);
 
@@ -85,7 +84,23 @@ router.get('/', asyncHandler(async (req, res) => {
     };
   });
 
-  res.json({ success: true, data: enrichedClients });
+  // Calculate global agency utility and working account balances for Tier 2
+  let mpesaBalances = { utility: 0, working: 0 };
+  const settingsService = require('../services/settingsService');
+  const settings = await settingsService.getSettings(agencyId);
+  if (settings && settings.integrationTier === 'tier2') {
+    const globalCollected = finRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+    const globalPaidOut = payoutsList.reduce((sum, p) => sum + (p.amount || 0), 0);
+    
+    const globalCommission = enrichedClients.reduce((sum, c) => sum + c.totalCommission, 0);
+    
+    // Utility Account (receives all gross payments)
+    mpesaBalances.utility = Math.max(0, globalCollected - globalPaidOut - globalCommission);
+    // Working Account (funds available for disbursement/commission retention)
+    mpesaBalances.working = Math.max(0, globalCommission);
+  }
+
+  res.json({ success: true, data: enrichedClients, mpesaBalances });
 }));
 
 // GET single client + stats + properties + payouts + expenses
@@ -180,15 +195,21 @@ router.get('/:id', asyncHandler(async (req, res) => {
         date: c.date,
         propertyName: clientProperties.find(p => p.id === c.propertyId)?.propertyName || 'Unknown Property'
       })).sort((a,b) => new Date(b.date) - new Date(a.date)),
-      payments: propertyPayments.map(p => ({
-        id: p.id,
-        amount: p.amount,
-        type: p.type || 'rent',
-        tenantName: p.tenantName || 'Tenant',
-        unitName: p.unitName || 'Unit',
-        createdAt: p.createdAt,
-        propertyName: clientProperties.find(prop => prop.id === p.propertyId)?.propertyName || 'Unknown Property'
-      })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
+      payments: propertyPayments.map(p => {
+        const prop = clientProperties.find(prop => prop.id === p.propertyId);
+        const rate = prop && prop.agencyCommission !== undefined ? parseFloat(prop.agencyCommission) : 8;
+        const commissionEarned = (p.amount || 0) * (rate / 100);
+        return {
+          id: p.id,
+          amount: p.amount,
+          commissionEarned,
+          type: p.type || 'rent',
+          tenantName: p.tenantName || 'Tenant',
+          unitName: p.unitName || 'Unit',
+          createdAt: p.createdAt,
+          propertyName: prop?.propertyName || 'Unknown Property'
+        };
+      }).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
     }
   });
 }));
@@ -196,7 +217,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 // POST create client
 router.post('/', asyncHandler(async (req, res) => {
   const { agencyId } = req.user;
-  const { name, email, phone, commissionRate, payoutMethod, payoutDetails, notes } = req.body;
+  const { name, email, phone, commissionRate, payoutMethod, payoutDetails, accountName, notes } = req.body;
 
   if (!name) {
     return res.status(400).json({ success: false, error: 'Name is required' });
@@ -210,6 +231,7 @@ router.post('/', asyncHandler(async (req, res) => {
     commissionRate: parseFloat(commissionRate) || 0,
     payoutMethod: payoutMethod || 'mpesa',
     payoutDetails: payoutDetails || '',
+    accountName: accountName || '',
     notes: notes || '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -224,7 +246,7 @@ router.post('/', asyncHandler(async (req, res) => {
 router.put('/:id', asyncHandler(async (req, res) => {
   const { agencyId } = req.user;
   const { id } = req.params;
-  const { name, email, phone, commissionRate, payoutMethod, payoutDetails, notes, assignedProperties } = req.body;
+  const { name, email, phone, commissionRate, payoutMethod, payoutDetails, accountName, notes, assignedProperties } = req.body;
 
   const clientRef = doc(db, 'clients', id);
   const clientSnap = await getDoc(clientRef);
@@ -240,6 +262,7 @@ router.put('/:id', asyncHandler(async (req, res) => {
     commissionRate: parseFloat(commissionRate) || 0,
     payoutMethod: payoutMethod || 'mpesa',
     payoutDetails: payoutDetails || '',
+    accountName: accountName || '',
     notes: notes || '',
     updatedAt: new Date().toISOString()
   };
@@ -323,6 +346,42 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
   };
 
   const docRef = await addDoc(collection(db, 'payouts'), newPayout);
+
+  // Trigger real M-Pesa Payout if Method is M-Pesa and Agency is Tier 2
+  if (paymentMethod === 'mpesa') {
+    const settingsService = require('../services/settingsService');
+    const dedicatedMpesaService = require('../services/payment/dedicatedMpesaService');
+    const settings = await settingsService.getSettings(agencyId);
+    
+    if (settings && settings.integrationTier === 'tier2') {
+      const credentials = settings.mpesaCredentials && settings.mpesaCredentials.consumerKey 
+        ? settings.mpesaCredentials 
+        : {
+            consumerKey: process.env.KODIPAY_MASTER_CONSUMER_KEY || '',
+            consumerSecret: process.env.KODIPAY_MASTER_CONSUMER_SECRET || '',
+            initiatorName: process.env.KODIPAY_MASTER_INITIATOR_NAME || '',
+            securityCredential: process.env.KODIPAY_MASTER_SECURITY_CREDENTIAL || '',
+            shortCode: process.env.KODIPAY_MASTER_SHORTCODE || '4005473'
+          };
+          
+      const actualPayoutMethod = client.payoutMethod || 'mpesa_b2c';
+      const targetNumber = client.payoutDetails || client.phone;
+      
+      if (!targetNumber) {
+        await deleteDoc(docRef);
+        return res.status(400).json({ success: false, error: 'Landlord does not have configured M-Pesa payout details or phone number.' });
+      }
+      
+      try {
+        await dedicatedMpesaService.executeRealPayout(payoutAmount, actualPayoutMethod, targetNumber, referenceNumber || docRef.id, credentials);
+      } catch (err) {
+        console.error('❌ Manual payout execution failed:', err.message);
+        // Clean up the created payout record since the transaction failed
+        await deleteDoc(docRef);
+        return res.status(400).json({ success: false, error: \`M-Pesa payment execution failed: \${err.message}\` });
+      }
+    }
+  }
 
   // Email Payout Receipt to client
   if (client.email) {

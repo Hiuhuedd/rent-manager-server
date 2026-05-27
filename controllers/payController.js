@@ -420,7 +420,7 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
     <div class="state" id="state-success">
       <div class="icon-circle success">✓</div>
       <div class="state-title">Payment Received!</div>
-      <div class="state-desc">Your rent payment of <strong>KSh ${formattedAmount}</strong> has been confirmed.</div>
+      <div class="state-desc" id="success-desc">Your rent payment of <strong>KSh ${formattedAmount}</strong> has been confirmed.</div>
       <div class="receipt-badge" id="receipt-no">M-Pesa Receipt: —</div>
     </div>
 
@@ -508,6 +508,8 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
         if (data.status === 'completed') {
           clearInterval(pollTimer);
           document.getElementById('receipt-no').textContent = 'M-Pesa Receipt: ' + (data.receiptNo || '—');
+          const actualPaid = data.paidAmount ? Number(data.paidAmount).toLocaleString('en-KE') : Number(document.getElementById('pay-amount').value).toLocaleString('en-KE');
+          document.getElementById('success-desc').innerHTML = 'Your rent payment of <strong>KSh ' + actualPaid + '</strong> has been confirmed.';
           showState('state-success');
         } else if (data.status === 'failed') {
           clearInterval(pollTimer);
