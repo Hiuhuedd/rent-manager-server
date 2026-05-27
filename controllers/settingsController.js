@@ -125,7 +125,9 @@ class SettingsController {
             res.json(createSuccessResponse(registerResponse.data, 'Daraja C2B webhooks registered successfully!'));
         } catch (error) {
             console.error('[SettingsController] Failed to register webhooks:', error.response?.data || error.message);
-            res.status(500).json(createErrorResponse('Failed to register webhooks with Safaricom Daraja API', error.response?.data || error.message));
+            const safaricomErr = error.response?.data;
+            const errMsg = safaricomErr?.errorMessage || safaricomErr?.errorDescription || error.message;
+            res.status(500).json(createErrorResponse(500, `Safaricom API Error: ${errMsg}`, safaricomErr));
         }
     }
 }

@@ -31,8 +31,8 @@ function formatPhone(phone) {
   return p;
 }
 
-async function getMasterToken() {
-  const auth = Buffer.from(`${MASTER_KEY}:${MASTER_SECRET}`).toString('base64');
+async function getAccessToken(consumerKey, consumerSecret) {
+  const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
   const r = await axios.get(`${DARAJA_BASE_URL}/oauth/v1/generate?grant_type=client_credentials`, {
     headers: { Authorization: `Basic ${auth}` }
   });
@@ -131,26 +131,45 @@ async function initiateStk(req, res) {
   }
 
   try {
-    const token     = await getMasterToken();
+    const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
+    if (!tenantSnap.exists()) {
+      return res.status(404).json({ success: false, error: 'Tenant not found.' });
+    }
+    const tenant = tenantSnap.data();
+    const settings = await settingsService.getSettings(tenant.agencyId || 'app-settings');
+
+    let shortCode = MASTER_SHORTCODE;
+    let passkey   = MASTER_PASSKEY;
+    let consumerKey = MASTER_KEY;
+    let consumerSecret = MASTER_SECRET;
+
+    if (settings.integrationTier === 'dedicated_mpesa' && settings.mpesaCredentials?.shortCode) {
+      shortCode = settings.mpesaCredentials.shortCode;
+      passkey   = settings.mpesaCredentials.passkey;
+      consumerKey = settings.mpesaCredentials.consumerKey;
+      consumerSecret = settings.mpesaCredentials.consumerSecret;
+    }
+
+    const token     = await getAccessToken(consumerKey, consumerSecret);
     const timestamp = getTimestamp();
-    const password  = Buffer.from(`${MASTER_SHORTCODE}${MASTER_PASSKEY}${timestamp}`).toString('base64');
+    const password  = Buffer.from(`${shortCode}${passkey}${timestamp}`).toString('base64');
     const fmtPhone  = formatPhone(phone);
 
     const payload = {
-      BusinessShortCode: MASTER_SHORTCODE,
+      BusinessShortCode: shortCode,
       Password:          password,
       Timestamp:         timestamp,
       TransactionType:   'CustomerPayBillOnline',
       Amount:            Math.round(parseFloat(amount)),
       PartyA:            fmtPhone,
-      PartyB:            MASTER_SHORTCODE,
+      PartyB:            shortCode,
       PhoneNumber:       fmtPhone,
       CallBackURL:       `${BACKEND_URL}/api/pay/stk-callback`,
       AccountReference:  fmtPhone,
       TransactionDesc:   'Rent Payment via KodiPay',
     };
 
-    console.log(`📱 [PaySTK] Initiating rent STK push — KSh ${payload.Amount} to ${fmtPhone}`);
+    console.log(`📱 [PaySTK] Initiating rent STK push — KSh ${payload.Amount} to ${fmtPhone} via ${shortCode}`);
 
     const r = await axios.post(`${DARAJA_BASE_URL}/mpesa/stkpush/v1/processrequest`, payload, {
       headers: { Authorization: `Bearer ${token}` },

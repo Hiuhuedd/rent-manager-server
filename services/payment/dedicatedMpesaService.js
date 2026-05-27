@@ -18,8 +18,8 @@ const PAYOUT_CREDENTIALS = {
   shortCode: process.env.KODIPAY_MASTER_SHORTCODE || '4005473'
 };
 
-// KodiPay per-transaction fee deducted from agency commission only
-const KODIPAY_TRANSACTION_FEE = 3;
+// KodiPay per-transaction fee (0 because fees are handled externally for Tier 2)
+const KODIPAY_TRANSACTION_FEE = 0;
 
 class DedicatedMpesaService {
   /**
@@ -136,7 +136,7 @@ class DedicatedMpesaService {
     const landlordAmount = parseFloat((paymentAmount - agencyCommission).toFixed(2));
     const agencyNet = parseFloat(Math.max(0, agencyCommission - KODIPAY_TRANSACTION_FEE).toFixed(2));
 
-    console.log(`💸 [Tier 2] Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission} (${commissionRate}%), Fee=${KODIPAY_TRANSACTION_FEE}, Agency Net=${agencyNet}, Landlord Net=${landlordAmount}`);
+    console.log(`💸 [Tier 2] Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission} (${commissionRate}%), Agency Net=${agencyNet}, Landlord Net=${landlordAmount}`);
 
     // 1. Payout Landlord Net (no fee deduction)
     if (landlordAmount > 0) {
@@ -178,7 +178,7 @@ class DedicatedMpesaService {
           agencyNet,
           agencyPayoutType,
           refCode,
-          `Agency commission — ${commissionRate}% of KSh ${paymentAmount} less KSh ${KODIPAY_TRANSACTION_FEE} fee (KodiPay credentials)`
+          `Agency commission — ${commissionRate}% of KSh ${paymentAmount} (KodiPay credentials)`
         );
 
         try {
@@ -189,7 +189,7 @@ class DedicatedMpesaService {
         }
       }
     } else {
-      console.warn(`⚠️ [Tier 2] Agency commission (KSh ${agencyCommission}) is less than or equal to the KSh ${KODIPAY_TRANSACTION_FEE} fee — skipping commission payout.`);
+      console.warn(`⚠️ [Tier 2] Agency commission is 0 — skipping commission payout.`);
     }
   }
 
@@ -199,7 +199,7 @@ class DedicatedMpesaService {
   async triggerAutoFullPayoutToAgency(tenant, paymentAmount, agencyConfig) {
     const forwardAmount = parseFloat(Math.max(0, paymentAmount - KODIPAY_TRANSACTION_FEE).toFixed(2));
 
-    console.log(`💸 [Tier 2] Auto-forward to agency: Gross=${paymentAmount}, Fee=${KODIPAY_TRANSACTION_FEE}, Forward=${forwardAmount}`);
+    console.log(`💸 [Tier 2] Auto-forward to agency: Gross=${paymentAmount}, Forward=${forwardAmount}`);
 
     if (forwardAmount > 0) {
       const refCode = `DED-FWD-${payloadRefId()}`;
@@ -220,7 +220,7 @@ class DedicatedMpesaService {
         forwardAmount,
         agencyPayoutType,
         refCode,
-        `100% rent forward less KSh ${KODIPAY_TRANSACTION_FEE} fee (KodiPay credentials)`
+        `100% rent forward (KodiPay credentials)`
       );
 
       try {
