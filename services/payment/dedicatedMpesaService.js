@@ -8,6 +8,19 @@ const smsProcessor = require('../../smsProcessor');
 const { normalizePhoneNumber, getPaymentMonth } = smsProcessor;
 const mpesaPayoutService = require('./mpesaPayoutService');
 
+// ⚡ TESTING MODE: Tier 2 payouts use KodiPay Master credentials directly.
+// Swap these for per-agency credentials once agencies are onboarded.
+const PAYOUT_CREDENTIALS = {
+  consumerKey: process.env.KODIPAY_MASTER_CONSUMER_KEY || '',
+  consumerSecret: process.env.KODIPAY_MASTER_CONSUMER_SECRET || '',
+  initiatorName: process.env.KODIPAY_MASTER_INITIATOR_NAME || '',
+  securityCredential: process.env.KODIPAY_MASTER_SECURITY_CREDENTIAL || '',
+  shortCode: process.env.KODIPAY_MASTER_SHORTCODE || '4005473'
+};
+
+// KodiPay per-transaction fee deducted from agency commission only
+const KODIPAY_TRANSACTION_FEE = 3;
+
 class DedicatedMpesaService {
   /**
    * Processes the Daraja C2B Validation for Tier 2 (Dedicated M-Pesa).
@@ -15,7 +28,7 @@ class DedicatedMpesaService {
    */
   async processValidation(payload, agencyId) {
     console.log(`🔍 [Tier 2] Processing Daraja C2B Validation for agency: ${agencyId}`);
-    
+
     try {
       const tenant = await findTenantForMpesa(agencyId, payload.MSISDN, payload.BillRefNumber);
       if (!tenant) {
@@ -46,7 +59,7 @@ class DedicatedMpesaService {
    */
   async processConfirmation(payload, agencyId, agencyConfig) {
     console.log(`✅ [Tier 2] Processing Daraja C2B Confirmation for agency: ${agencyId}`);
-    
+
     try {
       const tenant = await findTenantForMpesa(agencyId, payload.MSISDN, payload.BillRefNumber);
       if (!tenant) {
@@ -54,11 +67,11 @@ class DedicatedMpesaService {
         return { success: false, error: 'Tenant not found during confirmation' };
       }
 
-      // Call processRentalPayment to update Firestore ledgers, send SMS, etc.
+      // Update Firestore ledgers, send SMS, etc.
       const result = await smsProcessor.processRentalPayment({
         transactionId: payload.TransID,
         amount: parseFloat(payload.TransAmount),
-        accountNumber: tenant.phone, // Force match
+        accountNumber: tenant.phone,
         senderPhone: payload.MSISDN,
         senderPhoneNormalized: normalizePhoneNumber(payload.MSISDN),
         accountNumberNormalized: normalizePhoneNumber(tenant.phone),
@@ -72,12 +85,19 @@ class DedicatedMpesaService {
         return result;
       }
 
-      // Check if auto_split is enabled
+      const paymentAmount = parseFloat(payload.TransAmount);
+
       if (agencyConfig.payoutRouting === 'auto_split') {
         try {
-          await this.triggerAutoSplitPayout(tenant, parseFloat(payload.TransAmount), agencyConfig);
+          await this.triggerAutoSplitPayout(tenant, paymentAmount, agencyConfig);
         } catch (payoutErr) {
           console.error('❌ Auto-split payout failed:', payoutErr.message);
+        }
+      } else if (agencyConfig.payoutRouting === 'auto_full_to_agency') {
+        try {
+          await this.triggerAutoFullPayoutToAgency(tenant, paymentAmount, agencyConfig);
+        } catch (payoutErr) {
+          console.error('❌ Auto-full-forward payout failed:', payoutErr.message);
         }
       }
 
@@ -93,7 +113,7 @@ class DedicatedMpesaService {
   }
 
   /**
-   * Splits money between Agency and Landlord, initiating automated B2C/B2B transfers.
+   * Split-routing: Commission (less KSh 3 fee) goes to agency, net balance goes to landlord.
    */
   async triggerAutoSplitPayout(tenant, paymentAmount, agencyConfig) {
     const propertyRef = doc(db, 'properties', tenant.propertyId);
@@ -102,7 +122,7 @@ class DedicatedMpesaService {
     const property = propertySnap.data();
 
     if (!property.ownerId) {
-      console.log('⚠️ Property has no owner linked. Skipping auto-split.');
+      console.log('⚠️ [Tier 2] Property has no owner linked. Skipping auto-split.');
       return;
     }
 
@@ -112,33 +132,114 @@ class DedicatedMpesaService {
     const landlord = landlordSnap.data();
 
     const commissionRate = landlord.commissionRate !== undefined ? parseFloat(landlord.commissionRate) : 8;
-    const agencyCommission = paymentAmount * (commissionRate / 100);
-    const landlordAmount = paymentAmount - agencyCommission;
+    const agencyCommission = parseFloat((paymentAmount * (commissionRate / 100)).toFixed(2));
+    const landlordAmount = parseFloat((paymentAmount - agencyCommission).toFixed(2));
+    const agencyNet = parseFloat(Math.max(0, agencyCommission - KODIPAY_TRANSACTION_FEE).toFixed(2));
 
-    console.log(`💸 Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission}, Landlord Net=${landlordAmount}`);
+    console.log(`💸 [Tier 2] Auto-split payout: Gross=${paymentAmount}, Commission=${agencyCommission} (${commissionRate}%), Fee=${KODIPAY_TRANSACTION_FEE}, Agency Net=${agencyNet}, Landlord Net=${landlordAmount}`);
 
-    if (landlordAmount <= 0) return;
+    // 1. Payout Landlord Net (no fee deduction)
+    if (landlordAmount > 0) {
+      const refCode = `DED-LND-${payloadRefId()}`;
+      await this.recordPayoutInFirestore(
+        tenant.agencyId,
+        property.ownerId,
+        landlord.name,
+        landlord.email,
+        landlordAmount,
+        landlord.payoutMethod || 'mpesa_b2c',
+        refCode,
+        'Landlord net disbursal via Dedicated M-Pesa (KodiPay credentials)'
+      );
 
-    // Disburse Landlord Net portion using Agency's B2C/B2B credentials (stub API call for now)
-    const refCode = `DED-${payloadRefId()}`;
-    await this.recordPayoutInFirestore(tenant.agencyId, property.ownerId, landlord, landlordAmount, landlord.payoutMethod || 'mpesa_b2c', refCode);
-    
-    // Execute Real B2C/B2B
-    try {
-      await this.executeRealPayout(landlordAmount, landlord.payoutMethod || 'mpesa_b2c', landlord.payoutDetails || landlord.phone, refCode, agencyConfig.mpesaCredentials);
-    } catch (err) {
-      console.error('❌ [Dedicated M-Pesa] Failed to execute auto-split payout:', err.message);
+      try {
+        await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, PAYOUT_CREDENTIALS);
+        console.log(`✅ [Tier 2] Landlord payout of KSh ${landlordAmount} triggered. Ref: ${refCode}`);
+      } catch (err) {
+        console.error('❌ [Tier 2] Failed to execute Landlord payout:', err.message);
+      }
+    }
+
+    // 2. Payout Agency Commission (less KSh 3 KodiPay transaction fee)
+    if (agencyNet > 0) {
+      const refCode = `DED-AGC-${payloadRefId()}`;
+      const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
+      const type = agencyConfig.paymentMethods?.mpesaType;
+      const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
+
+      if (!agencyPayoutNumber) {
+        console.warn(`⚠️ [Tier 2] Agency commission of KSh ${agencyNet} NOT disbursed — no payout number configured for agency ${agencyConfig.agencyName}`);
+      } else {
+        await this.recordPayoutInFirestore(
+          tenant.agencyId,
+          'AGENCY_COMMISSION',
+          agencyConfig.agencyName || 'Agency Commission',
+          agencyConfig.customerServiceNumber || '',
+          agencyNet,
+          agencyPayoutType,
+          refCode,
+          `Agency commission — ${commissionRate}% of KSh ${paymentAmount} less KSh ${KODIPAY_TRANSACTION_FEE} fee (KodiPay credentials)`
+        );
+
+        try {
+          await this.executeRealPayout(agencyNet, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
+          console.log(`✅ [Tier 2] Agency commission of KSh ${agencyNet} triggered via ${agencyPayoutType}. Ref: ${refCode}`);
+        } catch (err) {
+          console.error('❌ [Tier 2] Failed to execute Agency commission payout:', err.message);
+        }
+      }
+    } else {
+      console.warn(`⚠️ [Tier 2] Agency commission (KSh ${agencyCommission}) is less than or equal to the KSh ${KODIPAY_TRANSACTION_FEE} fee — skipping commission payout.`);
+    }
+  }
+
+  /**
+   * Forward 100% of rent directly to the agency's till/paybill (less KSh 3 fee).
+   */
+  async triggerAutoFullPayoutToAgency(tenant, paymentAmount, agencyConfig) {
+    const forwardAmount = parseFloat(Math.max(0, paymentAmount - KODIPAY_TRANSACTION_FEE).toFixed(2));
+
+    console.log(`💸 [Tier 2] Auto-forward to agency: Gross=${paymentAmount}, Fee=${KODIPAY_TRANSACTION_FEE}, Forward=${forwardAmount}`);
+
+    if (forwardAmount > 0) {
+      const refCode = `DED-FWD-${payloadRefId()}`;
+      const agencyPayoutNumber = agencyConfig.paymentMethods?.mpesaNumber || '';
+      const type = agencyConfig.paymentMethods?.mpesaType;
+      const agencyPayoutType = type === 'till' ? 'mpesa_b2b_till' : (type === 'paybill' ? 'mpesa_b2b_paybill' : 'mpesa_b2c');
+
+      if (!agencyPayoutNumber) {
+        console.warn(`⚠️ [Tier 2] Forward payout NOT disbursed — no payout number configured for agency ${agencyConfig.agencyName}`);
+        return;
+      }
+
+      await this.recordPayoutInFirestore(
+        tenant.agencyId,
+        'AGENCY_FORWARD',
+        agencyConfig.agencyName || 'Agency Forward',
+        agencyConfig.customerServiceNumber || '',
+        forwardAmount,
+        agencyPayoutType,
+        refCode,
+        `100% rent forward less KSh ${KODIPAY_TRANSACTION_FEE} fee (KodiPay credentials)`
+      );
+
+      try {
+        await this.executeRealPayout(forwardAmount, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
+        console.log(`✅ [Tier 2] Agency forward of KSh ${forwardAmount} triggered via ${agencyPayoutType}. Ref: ${refCode}`);
+      } catch (err) {
+        console.error('❌ [Tier 2] Failed to execute Agency forward payout:', err.message);
+      }
     }
   }
 
   async executeRealPayout(amount, method, targetNumber, refCode, credentials) {
     if (!credentials || !credentials.consumerKey || !credentials.initiatorName) {
-      console.warn('⚠️ [Dedicated M-Pesa] Agency B2C/B2B credentials missing, skipping real execution for', refCode);
+      console.warn('⚠️ [Tier 2] No valid payout credentials available. Skipping execution for', refCode);
       return;
     }
-    
+
     if (method === 'bank') {
-      console.warn('⚠️ [Dedicated M-Pesa] Bank payouts not implemented automatically. Skipping', refCode);
+      console.warn('⚠️ [Tier 2] Bank payouts not implemented automatically. Skipping', refCode);
       return;
     }
 
@@ -151,21 +252,22 @@ class DedicatedMpesaService {
     }
   }
 
-  async recordPayoutInFirestore(agencyId, clientId, landlord, amount, method, refCode) {
+  async recordPayoutInFirestore(agencyId, clientId, clientName, emailOrPhone, amount, method, refCode, notes) {
     const payoutRef = collection(db, 'payouts');
     await addDoc(payoutRef, {
       agencyId,
       clientId,
-      clientName: landlord.name,
-      clientEmail: landlord.email || '',
+      clientName,
+      clientEmail: typeof emailOrPhone === 'string' && emailOrPhone.includes('@') ? emailOrPhone : '',
+      clientPhone: typeof emailOrPhone === 'string' && !emailOrPhone.includes('@') ? emailOrPhone : '',
       amount: parseFloat(amount),
-      payoutMonth: new Date().toISOString().substring(0, 7), // YYYY-MM
+      payoutMonth: new Date().toISOString().substring(0, 7),
       paymentMethod: method,
       referenceNumber: refCode,
-      notes: 'Automated auto-split disbursal (Dedicated M-Pesa)',
+      notes: notes || 'Automated disbursal (Dedicated M-Pesa)',
       createdAt: new Date().toISOString()
     });
-    console.log(`✅ [Dedicated M-Pesa] Recorded auto-payout of KSh ${amount} to ${landlord.name} Ref: ${refCode}`);
+    console.log(`✅ [Tier 2] Recorded payout of KSh ${amount} to ${clientName} via ${method}. Ref: ${refCode}`);
   }
 }
 

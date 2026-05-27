@@ -54,7 +54,7 @@ class ReminderService {
                     const paybill = settings.paybill || '522533';
 
                     // Generate reminder SMS
-                    const message = this.generateReminderMessage(tenant, settings);
+                    const message = this.generateReminderMessage(tenant, settings, tenantDoc.id);
 
                     // Send SMS
                     await smsService.sendSMS(
@@ -95,9 +95,10 @@ class ReminderService {
      * Generate reminder message for a tenant using custom templates and active payment configurations
      * @param {Object} tenant - Tenant data
      * @param {Object} settings - Agency settings object
+     * @param {string} tenantId - The Firestore document ID of the tenant
      * @returns {string} SMS message
      */
-    generateReminderMessage(tenant, settings = {}) {
+    generateReminderMessage(tenant, settings = {}, tenantId = '') {
         const name = tenant.name || 'Tenant';
         const unitCode = tenant.unitCode || '';
         const rentAmount = tenant.rentAmount || 0;
@@ -108,6 +109,8 @@ class ReminderService {
 
         // Use arrears if available, otherwise fall back to rent amount
         const amountDue = arrears > 0 ? arrears : rentAmount;
+
+        const paymentLink = tenantId ? `https://rent-manager-server.onrender.com/pay/${tenantId}` : '';
 
         // 1. Build dynamic payment instructions string based on active payment methods
         let paybillString = '';
@@ -132,8 +135,13 @@ class ReminderService {
         }
 
         // 2. Select the template (custom from Settings, or our sleek minimal default)
-        const template = settings.smsTemplates?.rentDue || 
-            'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Support: {customerServiceNumber}';
+        let template = settings.smsTemplates?.rentDue || 
+            'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Pay instantly via link: {paymentLink} Support: {customerServiceNumber}';
+
+        // Ensure custom templates get the payment link if they don't have it
+        if (settings.smsTemplates?.rentDue && !template.includes('{paymentLink}')) {
+            template += ' Pay online: {paymentLink}';
+        }
 
         // 3. Perform placeholders replacement
         const message = template
@@ -143,6 +151,7 @@ class ReminderService {
             .replace(/{unitName}/g, unitCode) // Support both wildcards {unitName} and {unitCode}
             .replace(/{amount}/g, amountDue.toLocaleString())
             .replace(/{paybill}/g, paybillString)
+            .replace(/{paymentLink}/g, paymentLink)
             .replace(/{accountNumber}/g, accountNumber)
             .replace(/{customerServiceNumber}/g, settings.customerServiceNumber || '+254 700 123 456')
             .replace(/\s+for\s+your\s+building/gi, '')

@@ -43,6 +43,7 @@ const routes = require('./routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/logger');
 const { initializeMonthlyCronJob, initializeReminderCronJob, createManualResetEndpoint } = require('./services/cronService');
+const { checkoutPage } = require('./controllers/payController');
 
 const app = express();
 
@@ -56,7 +57,10 @@ initializeMonthlyCronJob();
 initializeReminderCronJob();
 createManualResetEndpoint(app);
 
-// Routes
+// Tenant rent checkout webview (linked from SMS reminder)
+app.get('/pay/:tenantId', checkoutPage);
+
+// API routes
 app.use('/api', routes);
 
 // Error handling (must be last)
