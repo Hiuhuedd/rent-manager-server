@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { db } = require('../config/firebase');
-const { doc, getDoc, setDoc, collection } = require('firebase/firestore');
+const { doc, getDoc, setDoc, collection, query, where, getDocs } = require('firebase/firestore');
 const settingsService = require('../services/settingsService');
 
 const DARAJA_BASE_URL = 'https://api.safaricom.co.ke';
@@ -61,7 +61,40 @@ async function checkoutPage(req, res) {
       if (propSnap.exists()) propertyName = propSnap.data().name || '';
     }
 
-    const amountDue = tenant.arrears > 0 ? tenant.arrears : (tenant.rentAmount || 0);
+    let rent = 0, deposit = 0, garbage = 0, water = 0, electricity = 0, penalties = 0;
+    
+    // Get breakdown
+    penalties = tenant.penaltyApplied ? (parseFloat(tenant.penaltyAmount) || 0) : 0;
+    if (tenant.unitCode && tenant.agencyId) {
+      const unitsQuery = query(collection(db, 'units'), where('unitId', '==', tenant.unitCode), where('agencyId', '==', tenant.agencyId));
+      const unitsSnap = await getDocs(unitsQuery);
+      if (!unitsSnap.empty) {
+        const unit = unitsSnap.docs[0].data();
+        rent = parseFloat(unit.rentAmount || unit.rent) || 0;
+        garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
+        water = parseFloat(unit.utilityFees?.waterBill) || 0;
+        electricity = parseFloat(unit.utilityFees?.electricityBill) || 0;
+        const { isMovedInThisMonth } = require('../utils/dateHelper');
+        if (isMovedInThisMonth(tenant.moveInDate)) {
+           deposit = parseFloat(unit.depositAmount || unit.deposit) || 0;
+        }
+      }
+    }
+    const tracking = tenant.monthlyPaymentTracking || {};
+    if (tracking.breakdown) {
+       if (tracking.breakdown.rent) rent = parseFloat(tracking.breakdown.rent) || rent;
+       if (tracking.breakdown.deposit) deposit = parseFloat(tracking.breakdown.deposit) || deposit;
+       if (tracking.breakdown.garbageFee) garbage = parseFloat(tracking.breakdown.garbageFee) || garbage;
+       if (tracking.breakdown.garbage) garbage = parseFloat(tracking.breakdown.garbage) || garbage;
+       if (tracking.breakdown.waterBill) water = parseFloat(tracking.breakdown.waterBill) || water;
+       if (tracking.breakdown.water) water = parseFloat(tracking.breakdown.water) || water;
+       if (tracking.breakdown.electricityBill) electricity = parseFloat(tracking.breakdown.electricityBill) || electricity;
+       if (tracking.breakdown.electricity) electricity = parseFloat(tracking.breakdown.electricity) || electricity;
+       if (tracking.breakdown.penalties) penalties = parseFloat(tracking.breakdown.penalties) || penalties;
+    }
+
+    const amountDue = tenant.arrears || 0;
+    const breakdown = { rent, deposit, garbage, water, electricity, penalties };
     const agencyName = settings.agencyName || 'KodiPay';
     const tenantPhone = tenant.phone || '';
     const displayPhone = tenantPhone.trim().startsWith('0')
@@ -74,6 +107,7 @@ async function checkoutPage(req, res) {
       unitCode:   tenant.unitCode || '',
       propertyName,
       amountDue,
+      breakdown,
       phone:      displayPhone,
       agencyName,
       backendUrl: BACKEND_URL,
@@ -200,7 +234,7 @@ async function checkStatus(req, res) {
 }
 
 // ─── HTML builder ──────────────────────────────────────────────────────────
-function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amountDue, phone, agencyName, backendUrl }) {
+function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amountDue, phone, agencyName, backendUrl, breakdown }) {
   const initials = agencyName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
   const formattedAmount = Number(amountDue).toLocaleString('en-KE');
 
@@ -230,8 +264,26 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
 
   .amount-block{text-align:center;margin-bottom:28px}
   .amount-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:8px}
-  .amount{font-size:44px;font-weight:800;letter-spacing:-2px;background:linear-gradient(135deg,#00d4aa,#00a3ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .amount-input-wrapper {
+    position: relative; display: flex; align-items: center; justify-content: center;
+    background: #1e1e2a; border: 1.5px solid rgba(255,255,255,.1); border-radius: 14px;
+    margin-bottom: 8px; padding: 0 16px; transition: border-color .2s; width: 100%;
+  }
+  .amount-input-wrapper:focus-within { border-color: #00d4aa; }
+  .amount-currency { color: #00d4aa; font-weight: 700; font-size: 20px; margin-right: 8px; }
+  .amount-input {
+    background: transparent; border: none; color: #fff; font-size: 32px; font-weight: 800;
+    font-family: 'Inter', sans-serif; outline: none; padding: 12px 0; width: 100%;
+  }
+  .amount-input::-webkit-outer-spin-button, .amount-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .amount-sub{font-size:13px;color:#475569;margin-top:4px;font-weight:500}
+
+  .breakdown{background:#1e1e2a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px;margin-bottom:24px}
+  .breakdown-row{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px;color:#94a3b8}
+  .breakdown-row:last-child{margin-bottom:0}
+  .breakdown-row span:last-child{font-weight:600;color:#e2e8f0}
+  .breakdown-row.total{border-top:1px dashed rgba(255,255,255,.1);padding-top:8px;margin-top:4px;color:#fff}
+  .breakdown-row.arrears span:last-child{color:#ef4444}
 
   .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
   .info-item{background:#1e1e2a;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px}
@@ -286,9 +338,23 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
     <!-- DEFAULT STATE -->
     <div id="state-default">
       <div class="amount-block">
-        <div class="amount-label">Amount Due</div>
-        <div class="amount">KSh ${formattedAmount}</div>
-        <div class="amount-sub">for ${new Date().toLocaleString('en-KE', { month: 'long', year: 'numeric' })}</div>
+        <div class="amount-label">Amount To Pay</div>
+        <div class="amount-input-wrapper">
+          <span class="amount-currency">KSh</span>
+          <input id="pay-amount" class="amount-input" type="number" inputmode="decimal" value="${amountDue}" min="1" step="1"/>
+        </div>
+        <div class="amount-sub">You can adjust the amount to make a partial payment.</div>
+      </div>
+
+      <div class="breakdown">
+        ${breakdown.rent > 0 ? \`<div class="breakdown-row"><span>Rent</span><span>KSh \${breakdown.rent.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.deposit > 0 ? \`<div class="breakdown-row"><span>Deposit</span><span>KSh \${breakdown.deposit.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.garbage > 0 ? \`<div class="breakdown-row"><span>Garbage</span><span>KSh \${breakdown.garbage.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.water > 0 ? \`<div class="breakdown-row"><span>Water</span><span>KSh \${breakdown.water.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.electricity > 0 ? \`<div class="breakdown-row"><span>Electricity</span><span>KSh \${breakdown.electricity.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.penalties > 0 ? \`<div class="breakdown-row"><span>Late Penalty</span><span>KSh \${breakdown.penalties.toLocaleString('en-KE')}</span></div>\` : ''}
+        <div class="breakdown-row total"><span>Total Monthly Expected</span><span>KSh ${(breakdown.rent + breakdown.deposit + breakdown.garbage + breakdown.water + breakdown.electricity + breakdown.penalties).toLocaleString('en-KE')}</span></div>
+        <div class="breakdown-row arrears"><span>System Arrears (Due)</span><span>KSh ${Number(amountDue).toLocaleString('en-KE')}</span></div>
       </div>
 
       <div class="info-grid">
@@ -308,7 +374,7 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
              value="${escHtml(phone)}" placeholder="07XXXXXXXX" autocomplete="tel"/>
       <div class="field-hint">You will receive a prompt on this number to enter your PIN.</div>
 
-      <button class="btn-pay" id="btn-pay" onclick="payNow()">Pay KSh ${formattedAmount}</button>
+      <button class="btn-pay" id="btn-pay" onclick="payNow()">Confirm & Pay</button>
     </div>
 
     <!-- PROCESSING STATE -->
@@ -357,10 +423,17 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
 
   async function payNow() {
     const phone = document.getElementById('phone-input').value.trim();
+    const finalAmount = document.getElementById('pay-amount').value;
+    
     if (!phone || phone.length < 9) {
       alert('Please enter a valid M-Pesa phone number.');
       return;
     }
+    if (!finalAmount || finalAmount < 1) {
+      alert('Please enter a valid amount to pay.');
+      return;
+    }
+
     document.getElementById('btn-pay').disabled = true;
     showState('state-loading');
 
@@ -368,7 +441,7 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
       const res  = await fetch(BACKEND + '/api/pay/stk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId: TENANT_ID, phone, amount: AMOUNT })
+        body: JSON.stringify({ tenantId: TENANT_ID, phone, amount: finalAmount })
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Request failed');
