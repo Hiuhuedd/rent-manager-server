@@ -378,7 +378,7 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
         console.error('❌ Manual payout execution failed:', err.message);
         // Clean up the created payout record since the transaction failed
         await deleteDoc(docRef);
-        return res.status(400).json({ success: false, error: \`M-Pesa payment execution failed: \${err.message}\` });
+        return res.status(400).json({ success: false, error: `M-Pesa payment execution failed: ${err.message}` });
       }
     }
   }
