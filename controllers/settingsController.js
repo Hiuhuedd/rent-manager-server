@@ -1,6 +1,3 @@
-// ============================================
-// FILE: src/controllers/settingsController.js
-// ============================================
 const settingsService = require('../services/settingsService');
 const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 
@@ -27,7 +24,6 @@ class SettingsController {
                 reminderConfig,
                 templates,
                 onboardingCompleted,
-                
                 defaultCurrency,
                 timezone,
                 brandAccent,
@@ -46,6 +42,7 @@ class SettingsController {
             } = req.body;
 
             const updates = {};
+
             if (agencyName !== undefined) updates.agencyName = agencyName;
             if (paybill !== undefined) updates.paybill = paybill;
             if (paymentMethod !== undefined) updates.paymentMethod = paymentMethod;
@@ -53,7 +50,6 @@ class SettingsController {
             if (reminderConfig !== undefined) updates.reminderConfig = reminderConfig;
             if (templates !== undefined) updates.templates = templates;
             if (onboardingCompleted !== undefined) updates.onboardingCompleted = onboardingCompleted;
-            
             if (defaultCurrency !== undefined) updates.defaultCurrency = defaultCurrency;
             if (timezone !== undefined) updates.timezone = timezone;
             if (brandAccent !== undefined) updates.brandAccent = brandAccent;
@@ -86,7 +82,7 @@ class SettingsController {
         try {
             const { agencyId } = req.user;
             const axios = require('axios');
-            
+
             // 1. Fetch current settings for credentials
             const settings = await settingsService.getSettings(agencyId);
             const creds = settings.mpesaCredentials;
@@ -118,6 +114,7 @@ class SettingsController {
             };
 
             console.log(`🔗 Dynamic Register URL for agency ${agencyId} (${creds.shortCode}) to ${callbackBase}`);
+
             const registerResponse = await axios.post(`${baseUrl}/mpesa/c2b/v2/registerurl`, payload, {
                 headers: { Authorization: `Bearer ${accessToken}` }
             });
@@ -131,22 +128,46 @@ class SettingsController {
         }
     }
 
+    /**
+     * FIXED: Get M-Pesa Live Balances
+     * This was the main source of the polling bug
+     */
     async getMpesaBalances(req, res) {
         try {
-            // Prevent 304 caching so polling always gets fresh data
-            res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+            // Strong anti-caching headers
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
             res.set('Pragma', 'no-cache');
+            res.set('Expires', '0');
             res.removeHeader('ETag');
 
             const { agencyId } = req.user;
             const settings = await settingsService.getSettings(agencyId);
-            if (settings && settings.liveMpesaBalances) {
-                return res.json(createSuccessResponse(settings.liveMpesaBalances, 'Live M-Pesa balances fetched'));
-            }
-            return res.json(createSuccessResponse({ utility: 0, working: 0, isLive: false }, 'No live balances yet'));
+
+            // Ensure we always return a consistent balance object
+            const liveBalances = settings?.liveMpesaBalances || {};
+
+            const responseData = {
+                utility: liveBalances.utility || 0,
+                working: liveBalances.working || 0,
+                isLive: !!liveBalances.isLive,
+                lastSynced: liveBalances.lastSynced || null
+            };
+
+            const message = responseData.isLive
+                ? 'Live M-Pesa balances fetched successfully'
+                : 'No live balances available yet';
+
+            res.json(createSuccessResponse(responseData, message));
         } catch (error) {
             console.error('[SettingsController] Failed to get mpesa balances:', error.message);
-            res.status(500).json(createErrorResponse(500, 'Failed to fetch balances'));
+
+            // Graceful fallback
+            res.json(createSuccessResponse({
+                utility: 0,
+                working: 0,
+                isLive: false,
+                lastSynced: null
+            }, 'Failed to fetch balances'));
         }
     }
 
@@ -155,12 +176,16 @@ class SettingsController {
             const { agencyId } = req.user;
             const settings = await settingsService.getSettings(agencyId);
             const creds = settings.mpesaCredentials;
+
             if (!creds || !creds.consumerKey || !creds.consumerSecret || !creds.shortCode) {
                 return res.status(400).json(createErrorResponse('Missing required M-Pesa credentials. Cannot query balances.'));
             }
+
             const mpesaPayoutService = require('../services/payment/mpesaPayoutService');
-            // Trigger async balance query; Safaricom will callback later
+
+            // Trigger async balance query (Safaricom will callback later)
             await mpesaPayoutService.queryAccountBalance(creds, agencyId);
+
             res.json(createSuccessResponse({}, 'Account balance query submitted to Safaricom successfully. Balances will update shortly.'));
         } catch (error) {
             console.error('[SettingsController] Failed to query account balances:', error.response?.data || error.message);
