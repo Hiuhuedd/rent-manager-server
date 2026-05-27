@@ -389,7 +389,7 @@ class PaymentService {
         };
 
         const reminderService = require('./reminderService');
-        const message = reminderService.generateReminderMessage(tenantData, settings);
+        const message = reminderService.generateReminderMessage(tenantData, settings, overdueTenant.tenantId);
 
         await smsService.sendSMS(tenant.phone, message, agencyId, 'system', overdueTenant.tenantId);
         results.sent++;

@@ -386,7 +386,7 @@ class TenantService {
       customerServiceNumber: settings.customerServiceNumber || ''
     };
 
-    const smsMessage = reminderService.generateReminderMessage(tenantDataForSMS, settings);
+    const smsMessage = reminderService.generateReminderMessage(tenantDataForSMS, settings, tenant.id);
     const smsResult = await smsService.sendSMS(tenant.phone, smsMessage, tenant.agencyId, tenant.id, tenant.unitCode);
     return { messageId: smsResult.messageId };
   }
