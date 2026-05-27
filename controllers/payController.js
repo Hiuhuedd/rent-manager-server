@@ -347,12 +347,12 @@ function buildCheckoutHTML({ tenantId, tenantName, unitCode, propertyName, amoun
       </div>
 
       <div class="breakdown">
-        ${breakdown.rent > 0 ? \`<div class="breakdown-row"><span>Rent</span><span>KSh \${breakdown.rent.toLocaleString('en-KE')}</span></div>\` : ''}
-        ${breakdown.deposit > 0 ? \`<div class="breakdown-row"><span>Deposit</span><span>KSh \${breakdown.deposit.toLocaleString('en-KE')}</span></div>\` : ''}
-        ${breakdown.garbage > 0 ? \`<div class="breakdown-row"><span>Garbage</span><span>KSh \${breakdown.garbage.toLocaleString('en-KE')}</span></div>\` : ''}
-        ${breakdown.water > 0 ? \`<div class="breakdown-row"><span>Water</span><span>KSh \${breakdown.water.toLocaleString('en-KE')}</span></div>\` : ''}
-        ${breakdown.electricity > 0 ? \`<div class="breakdown-row"><span>Electricity</span><span>KSh \${breakdown.electricity.toLocaleString('en-KE')}</span></div>\` : ''}
-        ${breakdown.penalties > 0 ? \`<div class="breakdown-row"><span>Late Penalty</span><span>KSh \${breakdown.penalties.toLocaleString('en-KE')}</span></div>\` : ''}
+        ${breakdown.rent > 0 ? `<div class="breakdown-row"><span>Rent</span><span>KSh ${breakdown.rent.toLocaleString('en-KE')}</span></div>` : ''}
+        ${breakdown.deposit > 0 ? `<div class="breakdown-row"><span>Deposit</span><span>KSh ${breakdown.deposit.toLocaleString('en-KE')}</span></div>` : ''}
+        ${breakdown.garbage > 0 ? `<div class="breakdown-row"><span>Garbage</span><span>KSh ${breakdown.garbage.toLocaleString('en-KE')}</span></div>` : ''}
+        ${breakdown.water > 0 ? `<div class="breakdown-row"><span>Water</span><span>KSh ${breakdown.water.toLocaleString('en-KE')}</span></div>` : ''}
+        ${breakdown.electricity > 0 ? `<div class="breakdown-row"><span>Electricity</span><span>KSh ${breakdown.electricity.toLocaleString('en-KE')}</span></div>` : ''}
+        ${breakdown.penalties > 0 ? `<div class="breakdown-row"><span>Late Penalty</span><span>KSh ${breakdown.penalties.toLocaleString('en-KE')}</span></div>` : ''}
         <div class="breakdown-row total"><span>Total Monthly Expected</span><span>KSh ${(breakdown.rent + breakdown.deposit + breakdown.garbage + breakdown.water + breakdown.electricity + breakdown.penalties).toLocaleString('en-KE')}</span></div>
         <div class="breakdown-row arrears"><span>System Arrears (Due)</span><span>KSh ${Number(amountDue).toLocaleString('en-KE')}</span></div>
       </div>
