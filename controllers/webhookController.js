@@ -160,6 +160,7 @@ class WebhookController {
           await updateDoc(settingsRef, {
             'liveMpesaBalances.utility': utilityBalance,
             'liveMpesaBalances.working': workingBalance,
+            'liveMpesaBalances.isLive': true,
             'liveMpesaBalances.lastSynced': new Date().toISOString()
           });
         }

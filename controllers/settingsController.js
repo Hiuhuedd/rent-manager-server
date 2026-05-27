@@ -133,6 +133,11 @@ class SettingsController {
 
     async getMpesaBalances(req, res) {
         try {
+            // Prevent 304 caching so polling always gets fresh data
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.set('Pragma', 'no-cache');
+            res.removeHeader('ETag');
+
             const { agencyId } = req.user;
             const settings = await settingsService.getSettings(agencyId);
             if (settings && settings.liveMpesaBalances) {
