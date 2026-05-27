@@ -134,6 +134,7 @@ class TenantService {
         const rent = parseFloat(unit.rentAmount) || 0;
         const garbage = parseFloat(unit.utilityFees?.garbageFee) || 0;
         let water = parseFloat(unit.utilityFees?.waterBill) || 0;
+        const electricity = parseFloat(unit.utilityFees?.electricityBill) || parseFloat(unit.utilityFees?.electricity) || 0;
         const deposit = parseFloat(unit.depositAmount) || 0;
 
         // For properties with individual meters, fetch water bill from water_bills collection
@@ -158,7 +159,7 @@ class TenantService {
         const depositPending = tenant.rentDeposit?.status === DEPOSIT_STATUS.PENDING;
         const includeDeposit = isNewTenant && depositPending && deposit > 0;
 
-        const monthlyRent = rent + garbage + water;
+        const monthlyRent = rent + garbage + water + electricity;
         const totalExpected = monthlyRent + (includeDeposit ? deposit : 0);
 
         // --- BALANCE CARRY-OVER LOGIC ---
@@ -180,7 +181,7 @@ class TenantService {
           remCarry -= allocatedRent;
         }
         if (remCarry > 0) {
-          allocatedUtilities = Math.min(remCarry, garbage + water);
+          allocatedUtilities = Math.min(remCarry, garbage + water + electricity);
           remCarry -= allocatedUtilities;
         }
 

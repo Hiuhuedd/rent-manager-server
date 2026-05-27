@@ -226,7 +226,8 @@ const processRentalPayment = async (paymentData) => {
       waterBill = parseFloat(unit.utilityFees?.waterBill) || 0;
     }
 
-    const utilitiesAmount = garbageFee + waterBill;
+    const electricityBill = parseFloat(unit.utilityFees?.electricityBill) || parseFloat(unit.utilityFees?.electricity) || 0;
+    const utilitiesAmount = garbageFee + waterBill + electricityBill;
     const depositAmount = parseFloat(unit.depositAmount) || 0;
 
     // Check if deposit is required (Carry over existing logic)

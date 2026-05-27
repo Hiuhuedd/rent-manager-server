@@ -45,6 +45,7 @@ const processManualPayment = async ({
 
     const rentAmount = parseFloat(unit.rentAmount) || 0;
     const garbageFee = parseFloat(unit.utilityFees?.garbageFee) || 0;
+    const electricityBill = parseFloat(unit.utilityFees?.electricityBill) || parseFloat(unit.utilityFees?.electricity) || 0;
     let waterBill = isIndividualMeter ? 0 : (parseFloat(unit.utilityFees?.waterBill) || 0);
 
     if (isIndividualMeter) {
@@ -57,7 +58,7 @@ const processManualPayment = async ({
       } catch (_) {}
     }
 
-    const utilitiesAmount = garbageFee + waterBill;
+    const utilitiesAmount = garbageFee + waterBill + electricityBill;
     const depositAmount = parseFloat(unit.depositAmount) || 0;
 
     // Check if deposit is required (New tenant logic)
@@ -130,7 +131,13 @@ const processManualPayment = async ({
       source: 'manual',
       allocation: { deposit: allocatedToDeposit, rent: allocatedToRent, utilities: allocatedToUtilities, excess },
       monthlyTracking: {
-        expectedTotal, totalPaid: totalMonthlyPaid, remainingAmount: remainingTotal, status: monthlyStatus,
+        month: targetMonth,
+        expectedAmount: expectedTotal,
+        expectedTotal, 
+        paidAmount: totalMonthlyPaid,
+        totalPaid: totalMonthlyPaid, 
+        remainingAmount: remainingTotal, 
+        status: monthlyStatus,
         breakdown: {
           deposit:   { required: depositRequired, paid: totalDepositPaid, remaining: Math.max(0, depositRequired - totalDepositPaid) },
           rent:      { required: rentAmount,      paid: totalRentPaid,      remaining: Math.max(0, rentAmount - totalRentPaid) },
