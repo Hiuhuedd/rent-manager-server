@@ -324,7 +324,7 @@ router.delete('/:id', asyncHandler(async (req, res) => {
 router.post('/:id/payouts', asyncHandler(async (req, res) => {
   const { agencyId } = req.user;
   const { id } = req.params;
-  const { amount, paymentMethod, referenceNumber, notes, payoutMonth } = req.body;
+  const { amount, paymentMethod, referenceNumber, notes, payoutMonth, sendSms, sendEmail } = req.body;
 
   const clientRef = doc(db, 'clients', id);
   const clientSnap = await getDoc(clientRef);
@@ -392,7 +392,7 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
   }
 
   // Email Payout Receipt to client
-  if (client.email) {
+  if (client.email && sendEmail !== false) {
     try {
       const emailSubject = `Client Payout Confirmed - KodiPay`;
       const emailHtml = `
@@ -451,7 +451,7 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
   }
 
   // Send SMS confirmation to client
-  if (client.phone) {
+  if (client.phone && sendSms !== false) {
     try {
       const formattedAmount = new Intl.NumberFormat('en-KE').format(payoutAmount);
       const smsMessage = `KodiPay: Payout Confirmed! KSh ${formattedAmount} has been disbursed to you for ${payoutMonth || 'All-Time'} via ${paymentMethod.toUpperCase()}.${referenceNumber ? ` Ref: ${referenceNumber}.` : ''} Thank you!`;
