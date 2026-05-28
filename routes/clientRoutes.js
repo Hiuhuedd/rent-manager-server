@@ -360,12 +360,16 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
     const settingsService = require('../services/settingsService');
     const dedicatedMpesaService = require('../services/payment/dedicatedMpesaService');
     const settings = await settingsService.getSettings(agencyId);
-    
-    const isLiveMpesa = settings && (settings.integrationTier === 'tier2' || (settings.liveMpesaBalances && settings.liveMpesaBalances.isLive));
+
+    console.log(`🔍 [Payout] Settings check — integrationTier: "${settings?.integrationTier}" | isLive: ${settings?.liveMpesaBalances?.isLive}`);
+    console.log(`🔍 [Payout] Client payoutMethod: "${client.payoutMethod}" | payoutDetails: "${client.payoutDetails}" | phone: "${client.phone}"`);
+
+    const isLiveMpesa = settings && (settings.integrationTier === 'tier2' || (settings.liveMpesaBalances && settings.liveMpesaBalances.isLive === true));
 
     if (isLiveMpesa) {
-      const credentials = settings.mpesaCredentials && settings.mpesaCredentials.consumerKey 
-        ? settings.mpesaCredentials 
+      console.log(`🚀 [Payout] LIVE M-Pesa execution triggered for client ${client.name} (${client.payoutMethod})`);
+      const credentials = settings.mpesaCredentials && settings.mpesaCredentials.consumerKey
+        ? settings.mpesaCredentials
         : {
             consumerKey: process.env.KODIPAY_MASTER_CONSUMER_KEY || '',
             consumerSecret: process.env.KODIPAY_MASTER_CONSUMER_SECRET || '',
@@ -373,23 +377,29 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
             securityCredential: process.env.KODIPAY_MASTER_SECURITY_CREDENTIAL || '',
             shortCode: process.env.KODIPAY_MASTER_SHORTCODE || '4005473'
           };
-          
+
+      console.log(`🔑 [Payout] Using credentials — shortCode: ${credentials.shortCode} | initiator: ${credentials.initiatorName}`);
+
       const actualPayoutMethod = client.payoutMethod || 'mpesa_b2c';
       const targetNumber = client.payoutDetails || client.phone;
-      
+
       if (!targetNumber) {
         await deleteDoc(docRef);
         return res.status(400).json({ success: false, error: 'Landlord does not have configured M-Pesa payout details or phone number.' });
       }
-      
+
+      console.log(`📡 [Payout] Executing ${actualPayoutMethod} of KSh ${payoutAmount} to ${targetNumber}`);
+
       try {
         await dedicatedMpesaService.executeRealPayout(payoutAmount, actualPayoutMethod, targetNumber, referenceNumber || docRef.id, credentials);
+        console.log(`✅ [Payout] M-Pesa execution succeeded for ${client.name}`);
       } catch (err) {
-        console.error('❌ Manual payout execution failed:', err.message);
-        // Clean up the created payout record since the transaction failed
+        console.error('❌ [Payout] M-Pesa execution failed:', err.message);
         await deleteDoc(docRef);
         return res.status(400).json({ success: false, error: `M-Pesa payment execution failed: ${err.message}` });
       }
+    } else {
+      console.warn(`⚠️ [Payout] Skipping live M-Pesa — isLiveMpesa=${isLiveMpesa}. Recorded as manual ledger entry.`);
     }
   }
 

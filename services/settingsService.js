@@ -112,6 +112,7 @@ class SettingsService {
                 },
                 payoutRouting: data.payoutRouting || 'manual',
                 agencyPrefix: data.agencyPrefix || agencyId.substring(0, 5).toUpperCase(),
+                liveMpesaBalances: data.liveMpesaBalances || null,
                 
                 updatedAt: data.updatedAt?.toDate?.() || null,
             };
