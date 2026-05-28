@@ -355,13 +355,15 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
 
   const docRef = await addDoc(collection(db, 'payouts'), newPayout);
 
-  // Trigger real M-Pesa Payout if Method is M-Pesa and Agency is Tier 2
+  // Trigger real M-Pesa Payout if Method is M-Pesa and Agency is Live
   if (paymentMethod === 'mpesa') {
     const settingsService = require('../services/settingsService');
     const dedicatedMpesaService = require('../services/payment/dedicatedMpesaService');
     const settings = await settingsService.getSettings(agencyId);
     
-    if (settings && settings.integrationTier === 'tier2') {
+    const isLiveMpesa = settings && (settings.integrationTier === 'tier2' || (settings.liveMpesaBalances && settings.liveMpesaBalances.isLive));
+
+    if (isLiveMpesa) {
       const credentials = settings.mpesaCredentials && settings.mpesaCredentials.consumerKey 
         ? settings.mpesaCredentials 
         : {

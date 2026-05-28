@@ -51,9 +51,7 @@ const app = express();
 app.use(express.json());
 
 const allowedOrigins = [
-  'https://kodipay-platform.netlify.app',
-  'http://localhost:3000',
-  'http://localhost:5173'
+  '*'
 ];
 
 app.use(cors({
