@@ -70,16 +70,35 @@ router.get('/', asyncHandler(async (req, res) => {
     const netPayoutDue = totalCollected - totalCommission - totalExpenses;
     const outstanding = Math.max(0, netPayoutDue - totalPaid);
 
+    // Build enriched payment records for this client
+    const clientPaymentRecords = propertyPayments.map(r => {
+      const prop = clientProperties.find(p => p.id === r.propertyId);
+      return {
+        ...r,
+        propertyName: prop?.propertyName || prop?.name || r.propertyName || '—',
+        commissionEarned: prop
+          ? r.amount * ((prop.agencyCommission !== undefined ? parseFloat(prop.agencyCommission) : 8) / 100)
+          : 0
+      };
+    }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    const clientExpenseRecords = clientCosts.map(c => {
+      const prop = clientProperties.find(p => p.id === c.propertyId);
+      return { ...c, propertyName: prop?.propertyName || prop?.name || c.propertyName || '—' };
+    }).sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+
     return {
       ...client,
       propertiesCount: clientProperties.length,
-      properties: clientProperties.map(p => ({ id: p.id, name: p.propertyName })),
+      properties: clientProperties.map(p => ({ id: p.id, name: p.propertyName, unitsCount: p.unitsCount, agencyCommission: p.agencyCommission })),
       totalCollected,
       totalCommission,
       totalExpenses,
       netPayoutDue,
       totalPaid,
       outstandingPayout: outstanding,
+      payments: clientPaymentRecords,
+      expenses: clientExpenseRecords,
       payouts: clientPayouts.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt))
     };
   });
