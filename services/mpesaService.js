@@ -61,7 +61,7 @@ class MpesaService {
       const url = `${DARAJA_BASE_URL}/mpesa/stkpush/v1/processrequest`;
       const auth = `Bearer ${accessToken}`;
       const timestamp = getTimestamp();
-      
+
       // Password generation: ShortCode + PassKey + Timestamp
       const password = Buffer.from(
         `${DARAJA_SHORTCODE}${DARAJA_PASSKEY}${timestamp}`
@@ -78,32 +78,32 @@ class MpesaService {
       // Dynamic Callback URL formation. We prioritize BACKEND_URL (for custom local tunnels e.g., Ngrok)
       // or RENDER_EXTERNAL_URL (automatically populated by Render for your Web Service).
       let baseUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || callbackBaseUrl;
-      
+
       // If running locally without a tunnel, fall back to your live Render backend so Safaricom's validation passes
       if (!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
         baseUrl = 'https://rent-manager-server.onrender.com';
       }
-      
+
       // Clean trailing slashes if present
       if (baseUrl && baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
       }
-      
+
       const callbackUrl = `${baseUrl}/api/billing/mpesa-callback`;
 
       console.log(`📱 Initiating STK push for ${formattedPhone} of KSh ${amount}...`);
-      
+
       const payload = {
         BusinessShortCode: DARAJA_SHORTCODE,
         Password: password,
         Timestamp: timestamp,
-        TransactionType: 'CustomerBuyGoodsOnline',
+        TransactionType: 'CustomerPayBillOnline',  // changed from CustomerBuyGoodsOnline
         Amount: Math.round(parseFloat(amount)),
         PartyA: formattedPhone,
-        PartyB: DARAJA_PARTY_B,
+        PartyB: DARAJA_SHORTCODE,                  // changed from DARAJA_PARTY_B — paybill uses the same shortcode
         PhoneNumber: formattedPhone,
         CallBackURL: callbackUrl,
-        AccountReference: 'KodiPay Systems',
+        AccountReference: 'KodiPay Systems',       // used as account number on the M-Pesa prompt
         TransactionDesc: `KodiPay Checkout ${type}`
       };
 
@@ -115,7 +115,7 @@ class MpesaService {
 
       if (ResponseCode === '0') {
         console.log(`✅ STK push successfully requested. CheckoutRequestID: ${CheckoutRequestID}`);
-        
+
         // Save pending checkout in Firestore
         await setDoc(doc(db, 'mpesa_checkouts', CheckoutRequestID), {
           CheckoutRequestID,
@@ -282,7 +282,7 @@ class MpesaService {
             const smsLimit = checkout.planId === 'growth' ? 5000 : (checkout.planId === 'professional' ? 15000 : 1500);
 
             receiptMsg = `KodiPay Payment Confirmed!\nReceipt No: ${mpesaReceiptNumber}\nAmount: KSh ${paidAmount}\nPlan: ${planName}\nStatus: Activated successfully.\nThank you for choosing KodiPay.`;
-            
+
             thankYouMsg = `Hi ${recipientName}, thank you for subscribing to KodiPay ${planName}! Your agency limits have been successfully upgraded (Properties: ${propertiesLimit}, Units: ${unitsLimit}, SMS: ${smsLimit}). We are thrilled to partner with you!`;
 
             emailSubject = `Payment Confirmed & Plan Activated - KodiPay`;
@@ -329,7 +329,7 @@ class MpesaService {
           } else {
             // SMS Topup Bundle
             receiptMsg = `KodiPay Payment Confirmed!\nReceipt No: ${mpesaReceiptNumber}\nAmount: KSh ${paidAmount}\nBundle: ${checkout.units} SMS Messages\nStatus: Credited successfully.\nThank you for choosing KodiPay.`;
-            
+
             thankYouMsg = `Hi ${recipientName}, thank you for topping up your SMS units! ${checkout.units} SMS messages have been successfully added to your KodiPay balance. Happy messaging!`;
 
             emailSubject = `SMS Bundle Topup Confirmed - KodiPay`;
