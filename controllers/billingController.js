@@ -44,6 +44,37 @@ class BillingController {
   }
 
   /**
+   * Poll the status of a pending STK Push checkout
+   * Returns: { status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'not_found' }
+   */
+  async getStkStatus(req, res) {
+    try {
+      const { checkoutRequestId } = req.params;
+      if (!checkoutRequestId) {
+        return res.status(400).json(createErrorResponse('checkoutRequestId is required'));
+      }
+
+      const checkoutSnap = await getDoc(doc(db, 'mpesa_checkouts', checkoutRequestId));
+      if (!checkoutSnap.exists()) {
+        return res.json(createSuccessResponse({ status: 'not_found' }));
+      }
+
+      const data = checkoutSnap.data();
+      res.json(createSuccessResponse({
+        status: data.status,           // 'pending' | 'completed' | 'failed'
+        mpesaReceiptNumber: data.mpesaReceiptNumber || null,
+        paidAmount: data.paidAmount || null,
+        resultDesc: data.resultDesc || null,
+        planId: data.planId || null,
+        type: data.type || null,
+        units: data.units || 0,
+      }));
+    } catch (error) {
+      res.status(500).json(createErrorResponse('Failed to fetch checkout status', error.message));
+    }
+  }
+
+  /**
    * Initiate live M-Pesa STK Push for billing plans/bundles
    */
   async initiateMpesaStk(req, res) {

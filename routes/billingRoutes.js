@@ -13,5 +13,7 @@ router.use(authMiddleware);
 router.get('/sms-usage', asyncHandler(billingController.getSmsUsage));
 router.post('/purchase-plan', asyncHandler(billingController.purchasePlan));
 router.post('/mpesa-stk', asyncHandler(billingController.initiateMpesaStk));
+router.get('/stk-status/:checkoutRequestId', asyncHandler(billingController.getStkStatus));
 
 module.exports = router;
+
