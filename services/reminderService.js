@@ -110,7 +110,8 @@ class ReminderService {
         // Use arrears if available, otherwise fall back to rent amount
         const amountDue = arrears > 0 ? arrears : rentAmount;
 
-        const paymentLink = tenantId ? `https://rent-manager-server.onrender.com/pay/${tenantId}` : '';
+        const isTierIntegrated = ['dedicated_mpesa', 'kodipay_paybill', 'tier2', 'tier3'].includes(settings.integrationTier);
+        const paymentLink = (tenantId && isTierIntegrated) ? `https://rent-manager-server.onrender.com/pay/${tenantId}` : '';
 
         // 1. Build dynamic payment instructions string based on active payment methods
         let paybillString = '';
@@ -135,12 +136,20 @@ class ReminderService {
         }
 
         // 2. Select the template (custom from Settings, or our sleek minimal default)
-        let template = settings.smsTemplates?.rentDue || 
-            'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Pay instantly via link: {paymentLink} Support: {customerServiceNumber}';
+        const defaultTemplate = isTierIntegrated
+            ? 'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Pay instantly via link: {paymentLink} Support: {customerServiceNumber}'
+            : 'Dear {tenantName}, rent for unit {unitName} is due. Please pay KSh {amount} via {paybill}. Support: {customerServiceNumber}';
 
-        // Ensure custom templates get the payment link if they don't have it
-        if (settings.smsTemplates?.rentDue && !template.includes('{paymentLink}')) {
+        let template = settings.smsTemplates?.rentDue || defaultTemplate;
+
+        // Ensure custom templates get the payment link if they don't have it (only if integrated)
+        if (isTierIntegrated && settings.smsTemplates?.rentDue && !template.includes('{paymentLink}')) {
             template += ' Pay online: {paymentLink}';
+        }
+
+        // If tier is not integrated but custom template includes paymentLink, gracefully remove it
+        if (!isTierIntegrated) {
+            template = template.replace(/\s*Pay (instantly via link|online):\s*\{paymentLink\}/gi, '');
         }
 
         // 3. Perform placeholders replacement
