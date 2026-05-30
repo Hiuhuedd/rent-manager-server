@@ -44,6 +44,12 @@ class TenantController {
     res.json(createSuccessResponse(result, 'Tenant created successfully'));
   }
 
+  async updateTenant(req, res) {
+    const { agencyId } = req.user;
+    const result = await tenantService.updateTenant(req.params.tenantId, req.body, agencyId);
+    res.json(createSuccessResponse(result, 'Tenant updated successfully'));
+  }
+
   async deleteTenant(req, res) {
     const { agencyId } = req.user;
     const result = await tenantService.deleteTenant(req.params.tenantId, agencyId);

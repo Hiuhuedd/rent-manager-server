@@ -335,6 +335,28 @@ class TenantService {
     return { tenantId: tenantRef.id, ...completeTenantData };
   }
 
+  async updateTenant(tenantId, updateData, agencyId) {
+    const tenantRef = doc(db, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantRef);
+    if (!tenantSnap.exists()) throw new Error('Tenant not found');
+    
+    const tenant = tenantSnap.data();
+    if (tenant.agencyId !== agencyId) throw new Error('Unauthorized');
+
+    const cleanData = {};
+    if (updateData.name) cleanData.name = updateData.name.trim();
+    if (updateData.phone) cleanData.phone = updateData.phone.trim();
+    if (updateData.idNumber) cleanData.idNumber = updateData.idNumber.trim();
+    if (updateData.rentDueDay) cleanData.rentDueDay = parseInt(updateData.rentDueDay);
+    if (updateData.moveInDate) cleanData.moveInDate = updateData.moveInDate;
+    
+    cleanData.updatedAt = new Date().toISOString();
+
+    await updateDoc(tenantRef, cleanData);
+    
+    return { success: true, ...cleanData };
+  }
+
   async deleteTenant(tenantId) {
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantSnap = await getDoc(tenantRef);

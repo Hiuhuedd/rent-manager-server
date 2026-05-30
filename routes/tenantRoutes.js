@@ -17,6 +17,7 @@ router.get('/', asyncHandler(tenantController.getAllTenants));
 router.get('/:id', asyncHandler(tenantController.getTenantById));
 router.get('/:id/payment-status', asyncHandler(tenantController.getPaymentStatus));
 router.post('/', validateTenantInput, asyncHandler(tenantController.createTenant));
+router.put('/:tenantId', asyncHandler(tenantController.updateTenant));
 router.delete('/:tenantId', asyncHandler(tenantController.deleteTenant));
 router.post('/:id/send-reminder', asyncHandler(tenantController.sendReminder));
 router.post('/:id/send-confirmation', asyncHandler(tenantController.sendConfirmation));

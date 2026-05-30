@@ -76,6 +76,9 @@ router.get('/', asyncHandler(async (req, res) => {
       return {
         ...r,
         propertyName: prop?.propertyName || prop?.name || r.propertyName || '—',
+        unitName: r.unitCode || r.unitId || '—',
+        type: r.paymentMethod || r.source || '—',
+        referenceNumber: r.transactionCode || r.receiptNumber || r.transactionId || '—',
         commissionEarned: prop
           ? r.amount * ((prop.agencyCommission !== undefined ? parseFloat(prop.agencyCommission) : 8) / 100)
           : 0
