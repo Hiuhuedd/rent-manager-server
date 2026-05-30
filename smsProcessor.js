@@ -420,21 +420,28 @@ const processRentalPayment = async (paymentData) => {
 
 
     // ============================================
-    // 6∩╕ÅΓâú SEND SMS CONFIRMATION
+    // 6. SEND SMS CONFIRMATION
     // ============================================
 
     try {
-      const smsMessage = SMSService.generatePaymentConfirmationSMS(
-        { unitCode: tenant.unitCode, name: tenant.name },
-        amount,
-        transactionId,
-        { remainingAmount: remainingTotal, status: monthlyStatus }
-      );
+      const settingsSnap = await getDoc(doc(db, 'settings', tenant.agencyId || 'default'));
+      const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+      
+      if (settings.reminderConfig?.sendConfirmationSMS !== false) {
+        const smsMessage = SMSService.generatePaymentConfirmationSMS(
+          { unitCode: tenant.unitCode, name: tenant.name },
+          amount,
+          transactionId,
+          { remainingAmount: remainingTotal, status: monthlyStatus }
+        );
 
-      await SMSService.sendSMS(tenant.phone, smsMessage, tenant.id, transactionId);
-      console.log(`≡ƒô▒ SMS sent to ${tenant.phone}`);
+        await SMSService.sendSMS(tenant.phone, smsMessage, tenant.agencyId || 'default', 'system', tenant.id);
+        console.log(`📱 SMS sent to ${tenant.phone}`);
+      } else {
+        console.log(`🔕 SMS Receipt disabled in settings. Skipping for ${tenant.name}`);
+      }
     } catch (smsError) {
-      console.error('ΓÜá∩╕Å SMS failed:', smsError.message);
+      console.error('⚠️ SMS failed:', smsError.message);
     }
 
     // ============================================

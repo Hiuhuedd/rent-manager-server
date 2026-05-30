@@ -141,7 +141,7 @@ class DedicatedMpesaService {
     // 1. Payout Landlord Net (no fee deduction)
     if (landlordAmount > 0) {
       const refCode = `DED-LND-${payloadRefId()}`;
-      await this.recordPayoutInFirestore(
+      const docRef = await this.recordPayoutInFirestore(
         tenant.agencyId,
         property.ownerId,
         landlord.name,
@@ -149,12 +149,31 @@ class DedicatedMpesaService {
         landlordAmount,
         landlord.payoutMethod || 'mpesa_b2c',
         refCode,
-        'Landlord net disbursal via Dedicated M-Pesa (KodiPay credentials)'
+        'Immediate Auto-Split: Landlord net disbursal via Dedicated M-Pesa'
       );
 
       try {
-        await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, PAYOUT_CREDENTIALS);
+        const mpesaRes = await this.executeRealPayout(landlordAmount, landlord.payoutMethod, landlord.payoutDetails || landlord.phone, refCode, PAYOUT_CREDENTIALS);
         console.log(`✅ [Tier 2] Landlord payout of KSh ${landlordAmount} triggered. Ref: ${refCode}`);
+        if (mpesaRes && mpesaRes.ConversationID) {
+            const { updateDoc } = require('firebase/firestore');
+            await updateDoc(docRef, { conversationId: mpesaRes.ConversationID });
+        }
+        
+        if (agencyConfig.reminderConfig?.sendLandlordAutoSplit !== false) {
+          const formatAmount = (amt) => new Intl.NumberFormat('en-KE', { style: 'decimal', maximumFractionDigits: 0 }).format(amt);
+          if (landlord.phone) {
+             const smsService = require('../smsService');
+             const msg = `Hello ${landlord.name}, KSH ${formatAmount(landlordAmount)} has been disbursed to you via Auto-Split by ${agencyConfig.agencyName || 'your agency'}. Thank you!`;
+             await smsService.sendSMS(landlord.phone, msg, tenant.agencyId, 'system', property.ownerId).catch(console.error);
+          }
+          if (landlord.email) {
+             const emailService = require('../emailService');
+             const subject = 'Auto-Split Payout Initiated';
+             const html = `<p>Hello ${landlord.name},</p><p>KSH <b>${formatAmount(landlordAmount)}</b> has been disbursed to you via Auto-Split by ${agencyConfig.agencyName || 'your agency'}.</p><p>Thank you!</p>`;
+             await emailService.sendEmail(landlord.email, subject, html).catch(console.error);
+          }
+        }
       } catch (err) {
         console.error('❌ [Tier 2] Failed to execute Landlord payout:', err.message);
       }
@@ -170,7 +189,7 @@ class DedicatedMpesaService {
       if (!agencyPayoutNumber) {
         console.warn(`⚠️ [Tier 2] Agency commission of KSh ${agencyNet} NOT disbursed — no payout number configured for agency ${agencyConfig.agencyName}`);
       } else {
-        await this.recordPayoutInFirestore(
+        const docRef = await this.recordPayoutInFirestore(
           tenant.agencyId,
           'AGENCY_COMMISSION',
           agencyConfig.agencyName || 'Agency Commission',
@@ -178,12 +197,16 @@ class DedicatedMpesaService {
           agencyNet,
           agencyPayoutType,
           refCode,
-          `Agency commission — ${commissionRate}% of KSh ${paymentAmount} (KodiPay credentials)`
+          `Immediate Auto-Split: Agency commission (${commissionRate}% of KSh ${paymentAmount})`
         );
 
         try {
-          await this.executeRealPayout(agencyNet, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
+          const mpesaRes = await this.executeRealPayout(agencyNet, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
           console.log(`✅ [Tier 2] Agency commission of KSh ${agencyNet} triggered via ${agencyPayoutType}. Ref: ${refCode}`);
+          if (mpesaRes && mpesaRes.ConversationID) {
+              const { updateDoc } = require('firebase/firestore');
+              await updateDoc(docRef, { conversationId: mpesaRes.ConversationID });
+          }
         } catch (err) {
           console.error('❌ [Tier 2] Failed to execute Agency commission payout:', err.message);
         }
@@ -212,7 +235,7 @@ class DedicatedMpesaService {
         return;
       }
 
-      await this.recordPayoutInFirestore(
+      const docRef = await this.recordPayoutInFirestore(
         tenant.agencyId,
         'AGENCY_FORWARD',
         agencyConfig.agencyName || 'Agency Forward',
@@ -220,12 +243,16 @@ class DedicatedMpesaService {
         forwardAmount,
         agencyPayoutType,
         refCode,
-        `100% rent forward (KodiPay credentials)`
+        `Immediate Auto-Forward: 100% rent forward`
       );
 
       try {
-        await this.executeRealPayout(forwardAmount, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
+        const mpesaRes = await this.executeRealPayout(forwardAmount, agencyPayoutType, agencyPayoutNumber, refCode, PAYOUT_CREDENTIALS);
         console.log(`✅ [Tier 2] Agency forward of KSh ${forwardAmount} triggered via ${agencyPayoutType}. Ref: ${refCode}`);
+        if (mpesaRes && mpesaRes.ConversationID) {
+            const { updateDoc } = require('firebase/firestore');
+            await updateDoc(docRef, { conversationId: mpesaRes.ConversationID });
+        }
       } catch (err) {
         console.error('❌ [Tier 2] Failed to execute Agency forward payout:', err.message);
       }
@@ -254,7 +281,7 @@ class DedicatedMpesaService {
 
   async recordPayoutInFirestore(agencyId, clientId, clientName, emailOrPhone, amount, method, refCode, notes) {
     const payoutRef = collection(db, 'payouts');
-    await addDoc(payoutRef, {
+    const docRef = await addDoc(payoutRef, {
       agencyId,
       clientId,
       clientName,
@@ -263,11 +290,12 @@ class DedicatedMpesaService {
       amount: parseFloat(amount),
       payoutMonth: new Date().toISOString().substring(0, 7),
       paymentMethod: method,
-      referenceNumber: refCode,
+      referenceNumber: '',
       notes: notes || 'Automated disbursal (Dedicated M-Pesa)',
       createdAt: new Date().toISOString()
     });
     console.log(`✅ [Tier 2] Recorded payout of KSh ${amount} to ${clientName} via ${method}. Ref: ${refCode}`);
+    return docRef;
   }
 }
 

@@ -169,21 +169,28 @@ const processManualPayment = async ({
 
     // 8. Send SMS Notification
     try {
-      const confirmationMsg = smsService.generatePaymentConfirmationSMS(
-        { name: tenant.name, unitCode: tenant.unitCode },
-        amount,
-        transactionCode || transactionId,
-        { 
-          remainingAmount: updatedArrears, 
-          status: monthlyStatus === 'paid' ? 'Paid' : 'Balance' 
-        }
-      );
+      const settingsSnap = await getDoc(doc(db, 'settings', agencyId));
+      const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+      
+      if (settings.reminderConfig?.sendConfirmationSMS !== false) {
+        const confirmationMsg = smsService.generatePaymentConfirmationSMS(
+          { name: tenant.name, unitCode: tenant.unitCode },
+          amount,
+          transactionCode || transactionId,
+          { 
+            remainingAmount: updatedArrears, 
+            status: monthlyStatus === 'paid' ? 'Paid' : 'Balance' 
+          }
+        );
 
-      if (tenant.phone) {
-        console.log(`📱 Sending confirmation SMS to ${tenant.name} (${tenant.phone})...`);
-        await smsService.sendSMS(tenant.phone, confirmationMsg, agencyId, 'system', tenant.id);
+        if (tenant.phone) {
+          console.log(`📱 Sending confirmation SMS to ${tenant.name} (${tenant.phone})...`);
+          await smsService.sendSMS(tenant.phone, confirmationMsg, agencyId, 'system', tenant.id);
+        } else {
+          console.warn(`⚠️ No phone number for tenant ${tenant.name}, skipping SMS.`);
+        }
       } else {
-        console.warn(`⚠️ No phone number for tenant ${tenant.name}, skipping SMS.`);
+        console.log(`🔕 SMS Receipt disabled in settings. Skipping for ${tenant.name}`);
       }
     } catch (smsError) {
       console.error('⚠️ Failed to send payment confirmation SMS:', smsError.message);
