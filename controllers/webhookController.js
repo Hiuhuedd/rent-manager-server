@@ -90,6 +90,17 @@ class WebhookController {
 
       if (resultCode === 0) {
         console.log(`✅ [Payout Result] SUCCESS - ConversationID: ${conversationId}, TransactionID: ${transactionId}`);
+        if (conversationId && transactionId) {
+            const { db } = require('../config/firebase');
+            const { collection, query, where, getDocs, updateDoc } = require('firebase/firestore');
+            const payoutsRef = collection(db, 'payouts');
+            const q = query(payoutsRef, where('conversationId', '==', conversationId));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+                await updateDoc(snap.docs[0].ref, { referenceNumber: transactionId });
+                console.log(`✅ [Payout Webhook] Updated payout ${snap.docs[0].id} with TransactionID ${transactionId}`);
+            }
+        }
       } else {
         console.warn(`⚠️ [Payout Result] FAILED - Code: ${resultCode}, Desc: ${resultDesc}, ConversationID: ${origConversationId}`);
       }

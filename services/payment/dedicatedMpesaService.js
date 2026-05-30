@@ -244,11 +244,11 @@ class DedicatedMpesaService {
     }
 
     if (method === 'mpesa_b2b' || method === 'mpesa_b2b_paybill' || method === 'paybill') {
-      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'paybill', 'KodiPay Payout', refCode);
+      return await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'paybill', 'KodiPay Payout', refCode);
     } else if (method === 'mpesa_b2b_till' || method === 'till') {
-      await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'till', 'KodiPay Payout', refCode);
+      return await mpesaPayoutService.triggerB2B(credentials, amount, targetNumber, 'till', 'KodiPay Payout', refCode);
     } else {
-      await mpesaPayoutService.triggerB2C(credentials, amount, targetNumber, 'KodiPay Rent', refCode);
+      return await mpesaPayoutService.triggerB2C(credentials, amount, targetNumber, 'KodiPay Rent', refCode);
     }
   }
 

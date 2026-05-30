@@ -413,8 +413,11 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
       console.log(`📡 [Payout] Executing ${actualPayoutMethod} of KSh ${payoutAmount} to ${targetNumber}`);
 
       try {
-        await dedicatedMpesaService.executeRealPayout(payoutAmount, actualPayoutMethod, targetNumber, referenceNumber || docRef.id, credentials);
+        const mpesaRes = await dedicatedMpesaService.executeRealPayout(payoutAmount, actualPayoutMethod, targetNumber, referenceNumber || docRef.id, credentials);
         console.log(`✅ [Payout] M-Pesa execution succeeded for ${client.name}`);
+        if (mpesaRes && mpesaRes.ConversationID) {
+            await updateDoc(docRef, { conversationId: mpesaRes.ConversationID });
+        }
       } catch (err) {
         console.error('❌ [Payout] M-Pesa execution failed:', err.message);
         await deleteDoc(docRef);
