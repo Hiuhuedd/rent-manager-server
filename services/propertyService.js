@@ -518,6 +518,8 @@ class PropertyService {
     if (!unitSnap.exists()) {
       throw new Error('Unit not found');
     }
+    
+    const oldData = unitSnap.data();
 
     // Update the unit
     const rent = parseFloat(data.rentAmount) || 0;
@@ -575,6 +577,63 @@ class PropertyService {
         propertyOccupiedUnits: propertyData.propertyOccupiedUnits,
         updatedAt: serverTimestamp(),
       }, { merge: true });
+    }
+
+    // Sync changes to the tenant if occupied
+    const oldRent = parseFloat(oldData.rentAmount) || 0;
+    const oldGarbage = parseFloat(oldData.utilityFees?.garbageFee) || 0;
+    const oldWater = parseFloat(oldData.utilityFees?.waterBill) || 0;
+    const oldElectricity = parseFloat(oldData.utilityFees?.electricityBill) || 0;
+    const diff = (rent + garbage + water + electricity) - (oldRent + oldGarbage + oldWater + oldElectricity);
+
+    if (diff !== 0 && oldData.tenantId) {
+      try {
+        const tenantRef = doc(db, 'tenants', oldData.tenantId);
+        const tenantSnap = await getDoc(tenantRef);
+        if (tenantSnap.exists()) {
+          const tenantData = tenantSnap.data();
+          const { getCurrentMonth } = require('../utils/dateHelper');
+          const currentMonth = getCurrentMonth();
+          
+          let updateTenantData = {
+            financialSummary: {
+              ...(tenantData.financialSummary || {}),
+              arrears: Math.max(0, (tenantData.financialSummary?.arrears || 0) + diff),
+              balance: (tenantData.financialSummary?.balance || 0) - diff
+            },
+            arrears: Math.max(0, (tenantData.arrears || 0) + diff),
+            updatedAt: serverTimestamp()
+          };
+
+          if (tenantData.monthlyPaymentTracking && tenantData.monthlyPaymentTracking.month === currentMonth) {
+            const oldTracking = tenantData.monthlyPaymentTracking;
+            const newExpected = (oldTracking.expectedAmount || 0) + diff;
+            const newRemaining = Math.max(0, (oldTracking.remainingAmount || 0) + diff);
+            
+            let status = 'unpaid';
+            const paid = oldTracking.paidAmount || 0;
+            if (newRemaining <= 0) status = 'paid';
+            else if (paid > 0) status = 'partial';
+            
+            updateTenantData.monthlyPaymentTracking = {
+              ...oldTracking,
+              expectedAmount: newExpected,
+              remainingAmount: newRemaining,
+              status: status,
+              breakdown: {
+                ...(oldTracking.breakdown || {}),
+                rent: (oldTracking.breakdown?.rent || 0) + (rent - oldRent),
+                utilities: (oldTracking.breakdown?.utilities || 0) + (garbage + water + electricity - oldGarbage - oldWater - oldElectricity)
+              }
+            };
+          }
+
+          await setDoc(tenantRef, updateTenantData, { merge: true });
+          console.log(`[PropertyService] Synced unit changes to tenant ${oldData.tenantId}. Diff: ${diff}`);
+        }
+      } catch (err) {
+        console.error('Failed to sync unit update to tenant:', err);
+      }
     }
 
     return {

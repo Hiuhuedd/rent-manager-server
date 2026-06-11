@@ -136,7 +136,7 @@ async function initiateStk(req, res) {
       return res.status(404).json({ success: false, error: 'Tenant not found.' });
     }
     const tenant = tenantSnap.data();
-    const settings = await settingsService.getSettings(tenant.agencyId || 'app-settings');
+    const settings = await settingsService.getSettings(tenant.agencyId || 'app-settings', true);
 
     let shortCode = MASTER_SHORTCODE;
     let passkey   = MASTER_PASSKEY;

@@ -381,7 +381,7 @@ router.post('/:id/payouts', asyncHandler(async (req, res) => {
   if (paymentMethod === 'mpesa') {
     const settingsService = require('../services/settingsService');
     const dedicatedMpesaService = require('../services/payment/dedicatedMpesaService');
-    const settings = await settingsService.getSettings(agencyId);
+    const settings = await settingsService.getSettings(agencyId, true);
 
     console.log(`🔍 [Payout] Settings check — integrationTier: "${settings?.integrationTier}" | isLive: ${settings?.liveMpesaBalances?.isLive}`);
     console.log(`🔍 [Payout] Client payoutMethod: "${client.payoutMethod}" | payoutDetails: "${client.payoutDetails}" | phone: "${client.phone}"`);

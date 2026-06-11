@@ -19,3 +19,4 @@ module.exports = {
   generateTenantWelcomeSMS: (tenantData, paymentInfo) => 
     SMSService.generateTenantWelcomeSMS(tenantData, paymentInfo),
 };
+ 

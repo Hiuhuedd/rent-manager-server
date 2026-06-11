@@ -33,7 +33,7 @@ class WebhookController {
         return res.status(200).json({ ResultCode: 1, ResultDesc: 'Business Short Code not registered' });
       }
 
-      const agencyConfig = await settingsService.getSettings(agencyId);
+      const agencyConfig = await settingsService.getSettings(agencyId, true);
       const validationResult = await dedicatedMpesaService.processValidation(payload, agencyId, agencyConfig);
 
       return res.status(200).json(validationResult);
@@ -59,7 +59,7 @@ class WebhookController {
         return res.status(200).json({ ResultCode: 1, ResultDesc: 'Business Short Code not registered' });
       }
 
-      const agencyConfig = await settingsService.getSettings(agencyId);
+      const agencyConfig = await settingsService.getSettings(agencyId, true);
       const confirmationResult = await dedicatedMpesaService.processConfirmation(payload, agencyId, agencyConfig);
 
       if (!confirmationResult.success) {

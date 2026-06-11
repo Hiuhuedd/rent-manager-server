@@ -84,7 +84,7 @@ class SettingsController {
             const axios = require('axios');
 
             // 1. Fetch current settings for credentials
-            const settings = await settingsService.getSettings(agencyId);
+            const settings = await settingsService.getSettings(agencyId, true);
             const creds = settings.mpesaCredentials;
 
             if (!creds || !creds.consumerKey || !creds.consumerSecret || !creds.shortCode) {
@@ -174,7 +174,7 @@ class SettingsController {
     async syncMpesaBalances(req, res) {
         try {
             const { agencyId } = req.user;
-            const settings = await settingsService.getSettings(agencyId);
+            const settings = await settingsService.getSettings(agencyId, true);
             const creds = settings.mpesaCredentials;
 
             if (!creds || !creds.consumerKey || !creds.consumerSecret || !creds.shortCode) {

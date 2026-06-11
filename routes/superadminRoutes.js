@@ -246,4 +246,33 @@ router.patch('/demo-requests/:id', async (req, res) => {
   }
 });
 
+// 4. Send Demo Test SMS (Public endpoint)
+router.post('/test-sms', async (req, res) => {
+  try {
+    const { phone, message } = req.body;
+    if (!phone || !message) {
+      return res.status(400).json({ success: false, error: 'Phone and message are required' });
+    }
+
+    let smsStatus = 'skipped';
+    try {
+      console.log(`📤 Dispatching Demo Test SMS to ${phone}...`);
+      const smsResult = await smsService.sendSMS(phone, message, 'public_demo', 'system', 'demo');
+      smsStatus = smsResult.success ? 'sent' : `failed: ${smsResult.error}`;
+    } catch (smsErr) {
+      console.error('❌ SMS dispatch error for Demo Test:', smsErr);
+      smsStatus = `failed: ${smsErr.message}`;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Test SMS processed',
+      sms: smsStatus
+    });
+  } catch (error) {
+    console.error('❌ Test SMS API Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = router;

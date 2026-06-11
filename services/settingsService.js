@@ -4,12 +4,15 @@
 const { db } = require('../config/firebase');
 const { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs } = require('firebase/firestore');
 
+const { decryptData } = require('../utils/encryption');
+
 class SettingsService {
     /**
      * Get settings for a specific agency
      * @param {string} agencyId - Agency ID
+     * @param {boolean} decrypt - Whether to decrypt mpesaCredentials (used by backend internally)
      */
-    async getSettings(agencyId = 'app-settings') {
+    async getSettings(agencyId = 'app-settings', decrypt = false) {
         try {
             const settingsRef = doc(db, 'settings', agencyId);
             const settingsSnap = await getDoc(settingsRef);
@@ -102,13 +105,13 @@ class SettingsService {
                 rentDueDay: data.rentDueDay || 5,
                 
                 integrationTier: data.integrationTier || 'manual',
-                mpesaCredentials: data.mpesaCredentials || {
-                    consumerKey: '',
-                    consumerSecret: '',
-                    passkey: '',
-                    shortCode: '',
-                    initiatorName: '',
-                    securityCredential: ''
+                mpesaCredentials: {
+                    consumerKey: decrypt ? decryptData(data.mpesaCredentials?.consumerKey) : (data.mpesaCredentials?.consumerKey || ''),
+                    consumerSecret: decrypt ? decryptData(data.mpesaCredentials?.consumerSecret) : (data.mpesaCredentials?.consumerSecret || ''),
+                    passkey: decrypt ? decryptData(data.mpesaCredentials?.passkey) : (data.mpesaCredentials?.passkey || ''),
+                    shortCode: data.mpesaCredentials?.shortCode || '',
+                    initiatorName: data.mpesaCredentials?.initiatorName || '',
+                    securityCredential: decrypt ? decryptData(data.mpesaCredentials?.securityCredential) : (data.mpesaCredentials?.securityCredential || '')
                 },
                 payoutRouting: data.payoutRouting || 'manual',
                 agencyPrefix: data.agencyPrefix || agencyId.substring(0, 5).toUpperCase(),
